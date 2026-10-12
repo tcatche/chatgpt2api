@@ -4,7 +4,7 @@ from typing import Any
 
 from services.account_service import account_service
 from services.config import config
-from services.openai_backend_api import OpenAIBackendAPI
+from services.model_service import model_catalog_service
 from utils.helper import CODEX_IMAGE_MODEL
 
 
@@ -29,14 +29,7 @@ def _upsert_dynamic_model(data: list[Any], seen: set[str], model: str) -> None:
 
 
 def list_models() -> dict[str, Any]:
-    backend = OpenAIBackendAPI()
-    try:
-        try:
-            result = backend.list_models()
-        except Exception:
-            result = {"object": "list", "data": []}
-    finally:
-        backend.close()
+    result = model_catalog_service.list_models()
     result["default_image_model"] = config.default_image_model
     data = result.get("data")
     if not isinstance(data, list):

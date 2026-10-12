@@ -34,17 +34,25 @@ class InvalidAccessTokenError(RuntimeError):
     pass
 
 
-class ImagePollTimeoutError(RuntimeError):
+class ImageTaskError(RuntimeError):
+    """图片生成异常基类，携带上游会话 ID 供调用方清理对话。"""
+
+    def __init__(self, message: str = "", conversation_id: str = "") -> None:
+        super().__init__(message)
+        self.conversation_id = conversation_id
+
+
+class ImagePollTimeoutError(ImageTaskError):
     pass
 
 
-class ImageContentPolicyError(RuntimeError):
+class ImageContentPolicyError(ImageTaskError):
     """Raised when image generation is blocked by content policy moderation."""
     pass
 
 
 class ImageStreamHardTimeoutError(RuntimeError):
-    """Raised when an image SSE stream exceeds its wall-clock hard limit."""
+    """图片 SSE 流读取超过硬上限时抛出，用于快速中断被挂起的长连接。"""
     pass
 
 
@@ -630,9 +638,9 @@ class OpenAIBackendAPI:
     @staticmethod
     def _normalize_thinking_effort(value: str) -> str:
         normalized = str(value or "").strip().lower()
-        if normalized in {"", "none"}:
+        if normalized in {"", "none", "auto"}:
             return ""
-        if normalized in {"low", "medium", "high"}:
+        if normalized in {"low", "medium", "high", "standard", "max"}:
             return normalized
         if normalized in {"xhigh", "extended"}:
             return "extended"
@@ -676,21 +684,26 @@ class OpenAIBackendAPI:
                 "screen_width": 2560,
             },
         }
-        normalized_effort = self._normalize_thinking_effort(thinking_effort)
+        normalized_effort = self._normalize_thinking_effort(thinking_effort or config.default_thinking_effort)
         if normalized_effort:
             payload["thinking_effort"] = normalized_effort
         return payload
 
-    def _image_model_slug(self, model: str) -> str:
-        """把标准图片模型名映射到底层 model slug。"""
+    def _image_model_settings(self, model: str) -> tuple[str, str]:
+        """把标准图片模型名映射为上游模型及思考强度。"""
         _, base_model = split_image_model(model)
         if not base_model:
-            return "auto"
+            return "auto", ""
         if base_model == "gpt-image-2":
-            return "gpt-5-5-thinking"
-        if base_model == CODEX_IMAGE_MODEL:
-            return base_model
-        return base_model
+            upstream_model = config.default_upstream_model_name
+        elif base_model == CODEX_IMAGE_MODEL:
+            upstream_model = base_model
+        else:
+            return "auto", ""
+        model_name, separator, suffix = upstream_model.rpartition("-")
+        if separator and suffix.lower() in {"standard", "extended", "max"}:
+            return model_name, suffix.lower()
+        return upstream_model, self._normalize_thinking_effort(config.default_thinking_effort)
 
     def _image_headers(self, path: str, requirements: ChatRequirements, conduit_token: str = "", accept: str = "*/*") -> \
             Dict[str, str]:
@@ -993,11 +1006,12 @@ class OpenAIBackendAPI:
     def _prepare_image_conversation(self, prompt: str, requirements: ChatRequirements, model: str) -> str:
         """为图片生成准备 conduit token。"""
         path = "/backend-api/f/conversation/prepare"
+        upstream_model, thinking_effort = self._image_model_settings(model)
         payload = {
             "action": "next",
             "fork_from_shared_post": False,
             "parent_message_id": new_uuid(),
-            "model": self._image_model_slug(model),
+            "model": upstream_model,
             "client_prepare_state": "success",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
@@ -1012,6 +1026,8 @@ class OpenAIBackendAPI:
             "supported_encodings": ["v1"],
             "client_contextual_info": {"app_name": "chatgpt.com"},
         }
+        if thinking_effort:
+            payload["thinking_effort"] = thinking_effort
         response = self.session.post(
             self.base_url + path,
             headers=self._image_headers(path, requirements),
@@ -1098,6 +1114,7 @@ class OpenAIBackendAPI:
     def _start_image_generation(self, prompt: str, requirements: ChatRequirements, conduit_token: str, model: str,
                                 references: Optional[list[Dict[str, Any]]] = None) -> requests.Response:
         """启动图片生成或编辑的 SSE 请求。"""
+        upstream_model, thinking_effort = self._image_model_settings(model)
         references = references or []
         parts = [{
             "content_type": "image_asset_pointer",
@@ -1135,7 +1152,7 @@ class OpenAIBackendAPI:
                 "metadata": metadata,
             }],
             "parent_message_id": new_uuid(),
-            "model": self._image_model_slug(model),
+            "model": upstream_model,
             "client_prepare_state": "sent",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
@@ -1157,6 +1174,8 @@ class OpenAIBackendAPI:
             "paragen_cot_summary_display_override": "allow",
             "force_parallel_switch": "auto",
         }
+        if thinking_effort:
+            payload["thinking_effort"] = thinking_effort
         path = "/backend-api/f/conversation"
         response = self.session.post(
             self.base_url + path,
@@ -2406,7 +2425,7 @@ class OpenAIBackendAPI:
                         "attempt": attempt,
                         "error_msg": policy_msg[:200],
                     })
-                    raise ImageContentPolicyError(policy_msg)
+                    raise ImageContentPolicyError(policy_msg, conversation_id or "")
 
             logger.debug({"event": "image_poll_check", "conversation_id": conversation_id, "attempt": attempt,
                           "file_ids": file_ids, "sediment_ids": sediment_ids})
@@ -2452,11 +2471,11 @@ class OpenAIBackendAPI:
         exc = ImagePollTimeoutError(
             f"ChatGPT 生图超时（已等待 {timeout_secs} 秒）。"
             f"当前超时阈值可在 config.json 中调大 image_poll_timeout_secs，"
-            f"也可能是账号被限流或生图队列拥堵导致。"
+            f"也可能是账号被限流或生图队列拥堵导致。",
+            conversation_id or "",
         )
         if last_task_error:
             setattr(exc, "task_error", last_task_error)
-        setattr(exc, "conversation_id", conversation_id or "")
         raise exc
 
     def _get_file_download_url(self, file_id: str, timeout_secs: float = 60.0) -> str:
@@ -2675,7 +2694,7 @@ class OpenAIBackendAPI:
                 task_error = getattr(exc, "task_error", "")
                 if not file_ids and not sediment_ids:
                     if task_error:
-                        raise ImageContentPolicyError(task_error) from exc
+                        raise ImageContentPolicyError(task_error, conversation_id or "") from exc
                     raise
                 logger.warning({
                     "event": "image_resolve_poll_partial_timeout",
@@ -2774,7 +2793,12 @@ class OpenAIBackendAPI:
         yield from self._iter_sse_payloads_capped(response, self._image_stream_hard_cap_secs())
 
     def _iter_sse_payloads_capped(self, response: Any, hard_cap_secs: float) -> Iterator[str]:
-        """Consume an image SSE stream with a wall-clock cap and forced-close fallback."""
+        """按墙钟硬上限消费图片 SSE 流，避免上游异常时长连接被无限挂起。
+
+        curl_cffi 在 stream=True + 标量 timeout 下不限制流式 body 的总读取时长，
+        上游未生成图片却保持连接时，读取会一直阻塞直到边缘重置。这里复用「图片轮询
+        超时」作为硬上限：到点后关闭底层连接以解除阻塞，并抛出明确错误让任务快速失败。
+        """
         try:
             normalized_cap = max(0.001, float(hard_cap_secs))
         except (TypeError, ValueError):

@@ -1,8 +1,7 @@
 "use client";
 
-import localforage from "localforage";
-
 import type { ImageModel } from "@/lib/api";
+import { httpRequest } from "@/lib/request";
 
 export type ImageConversationMode = "generate" | "edit";
 
@@ -64,13 +63,9 @@ export type ImageConversationStats = {
   running: number;
 };
 
-const imageConversationStorage = localforage.createInstance({
-  name: "chatgpt2api",
-  storeName: "image_conversations",
-});
-
-const IMAGE_CONVERSATIONS_KEY = "items";
-let imageConversationWriteQueue: Promise<void> = Promise.resolve();
+type ImageConversationListResponse = {
+  items: ImageConversation[];
+};
 
 function normalizeStoredImage(image: StoredImage): StoredImage {
   const normalized = {
@@ -216,92 +211,47 @@ function sortImageConversations(conversations: ImageConversation[]): ImageConver
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-function getTimestamp(value: string) {
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : 0;
-}
-
-function pickLatestConversation(current: ImageConversation, next: ImageConversation) {
-  return getTimestamp(next.updatedAt) >= getTimestamp(current.updatedAt) ? next : current;
-}
-
-function queueImageConversationWrite<T>(operation: () => Promise<T>): Promise<T> {
-  const result = imageConversationWriteQueue.then(operation);
-  imageConversationWriteQueue = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
-
-async function readStoredImageConversations(): Promise<ImageConversation[]> {
-  const items =
-    (await imageConversationStorage.getItem<Array<ImageConversation & Record<string, unknown>>>(
-      IMAGE_CONVERSATIONS_KEY,
-    )) || [];
-  return items.map(normalizeConversation);
-}
-
 export async function listImageConversations(): Promise<ImageConversation[]> {
-  return sortImageConversations(await readStoredImageConversations());
+  const result = await httpRequest<ImageConversationListResponse>("/api/image-conversations");
+  return sortImageConversations((result.items || []).map((item) => normalizeConversation(item)));
 }
 
 export async function saveImageConversations(conversations: ImageConversation[]): Promise<void> {
-  await queueImageConversationWrite(async () => {
-    const items = await readStoredImageConversations();
-    const conversationMap = new Map(items.map((item) => [item.id, item]));
-    for (const conversation of conversations.map(normalizeConversation)) {
-      const current = conversationMap.get(conversation.id);
-      conversationMap.set(conversation.id, current ? pickLatestConversation(current, conversation) : conversation);
-    }
-    await imageConversationStorage.setItem(
-      IMAGE_CONVERSATIONS_KEY,
-      sortImageConversations([...conversationMap.values()]),
-    );
+  if (conversations.length === 0) {
+    return;
+  }
+  await httpRequest<ImageConversationListResponse>("/api/image-conversations", {
+    method: "POST",
+    body: { conversations },
   });
 }
 
 export async function saveImageConversation(conversation: ImageConversation): Promise<void> {
-  await queueImageConversationWrite(async () => {
-    const items = await readStoredImageConversations();
-    const nextConversation = normalizeConversation(conversation);
-    const current = items.find((item) => item.id === nextConversation.id);
-    const persistedConversation = current ? pickLatestConversation(current, nextConversation) : nextConversation;
-    const nextItems = sortImageConversations([
-      persistedConversation,
-      ...items.filter((item) => item.id !== persistedConversation.id),
-    ]);
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
+  await httpRequest<ImageConversationListResponse>("/api/image-conversations", {
+    method: "POST",
+    body: { conversations: [conversation] },
   });
 }
 
 export async function renameImageConversation(id: string, title: string): Promise<void> {
-  await queueImageConversationWrite(async () => {
-    const items = await readStoredImageConversations();
-    const target = items.find((item) => item.id === id);
-    if (!target) return;
-    const updated = { ...target, title, updatedAt: new Date().toISOString() };
-    const nextItems = sortImageConversations([
-      updated,
-      ...items.filter((item) => item.id !== id),
-    ]);
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
-  });
+  await httpRequest<ImageConversationListResponse>(
+    `/api/image-conversations/${encodeURIComponent(id)}/rename`,
+    {
+      method: "POST",
+      body: { title },
+    },
+  );
 }
 
 export async function deleteImageConversation(id: string): Promise<void> {
-  await queueImageConversationWrite(async () => {
-    const items = await readStoredImageConversations();
-    await imageConversationStorage.setItem(
-      IMAGE_CONVERSATIONS_KEY,
-      items.filter((item) => item.id !== id),
-    );
+  await httpRequest<ImageConversationListResponse>(`/api/image-conversations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
   });
 }
 
 export async function clearImageConversations(): Promise<void> {
-  await queueImageConversationWrite(async () => {
-    await imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
+  await httpRequest<ImageConversationListResponse>("/api/image-conversations", {
+    method: "DELETE",
   });
 }
 

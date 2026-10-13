@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.9.8 - 2026-10-13
+
++ [修复] 修复反向代理终结 TLS 时生成的图片/文件链接为 http、在 https 页面被按混合内容拦截的问题：服务端改为按 `X-Forwarded-Proto`/`X-Forwarded-Host` 解析对外基础 URL；前端在 https 页面下将同源 http 资源自动升级为 https（兼容已存的旧链接）。
+
 ## 1.9.7 - 2026-10-13
 
 + [修复] 版本更新检查改为读取本 fork 的 VERSION/CHANGELOG（原先硬编码上游仓库，导致“最新版本”显示上游 1.8.0、更新日志串台）；可用 `NEXT_PUBLIC_UPDATE_REPO` 覆盖数据来源仓库。

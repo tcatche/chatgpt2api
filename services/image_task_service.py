@@ -72,9 +72,6 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "created_at": task.get("created_at"),
         "updated_at": task.get("updated_at"),
     }
-    prompt = task.get("prompt")
-    if prompt:
-        item["prompt"] = prompt
     if task.get("conversation_id"):
         item["conversation_id"] = task.get("conversation_id")
     if task.get("data") is not None:
@@ -221,7 +218,6 @@ class ImageTaskService:
                 "owner_id": owner,
                 "status": TASK_STATUS_QUEUED,
                 "mode": mode,
-                "prompt": _clean(payload.get("prompt")),
                 "model": _clean(payload.get("model"), config.default_image_model),
                 "size": _clean(payload.get("size")),
                 "quality": _clean(payload.get("quality"), "auto"),
@@ -386,7 +382,6 @@ class ImageTaskService:
                 "owner_id": owner,
                 "status": status,
                 "mode": "edit" if item.get("mode") == "edit" else "generate",
-                "prompt": _clean(item.get("prompt")),
                 "model": _clean(item.get("model"), config.default_image_model),
                 "size": _clean(item.get("size")),
                 "quality": _clean(item.get("quality"), "auto"),

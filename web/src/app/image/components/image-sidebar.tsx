@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, MessageSquarePlus, Pencil, ServerCog, Trash2 } from "lucide-react";
+import { LoaderCircle, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,6 @@ type ImageSidebarProps = {
   onDeleteConversation: (id: string) => void | Promise<void>;
   onRenameConversation: (id: string, title: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
-  onOpenServerHistory?: () => void;
   hideActionButtons?: boolean;
 };
 
@@ -31,7 +30,6 @@ export function ImageSidebar({
   onDeleteConversation,
   onRenameConversation,
   formatConversationTime,
-  onOpenServerHistory,
   hideActionButtons = false,
 }: ImageSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -83,17 +81,6 @@ export function ImageSidebar({
             </Button>
           </div>
         )}
-
-        {!hideActionButtons && onOpenServerHistory ? (
-          <Button
-            variant="outline"
-            className="h-10 w-full rounded-xl border-stone-200 bg-white/85 text-stone-600 hover:bg-white"
-            onClick={onOpenServerHistory}
-          >
-            <ServerCog className="size-4" />
-            服务端生图历史
-          </Button>
-        ) : null}
 
         <div
           className={cn(

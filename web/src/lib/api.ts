@@ -290,7 +290,6 @@ export type ImageTask = {
   id: string;
   status: "queued" | "running" | "success" | "error";
   mode: "generate" | "edit";
-  prompt?: string;
   model?: ImageModel;
   size?: string;
   quality?: string;

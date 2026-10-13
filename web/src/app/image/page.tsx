@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, History, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, History, LoaderCircle, Plus, ServerCog, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
 import { ImageDrawingDialog } from "@/app/image/components/image-drawing-dialog";
 import { ImageResults, type ImageLightboxItem } from "@/app/image/components/image-results";
 import { ImageSidebar } from "@/app/image/components/image-sidebar";
+import { ImageTaskHistoryDialog } from "@/app/image/components/image-task-history-dialog";
 import { ImageLightbox } from "@/components/image-lightbox";
 import {
   Dialog,
@@ -481,6 +482,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [globalImageModel, setGlobalImageModel] = useState<ImageModel>("gpt-image-2");
   const [imageModels, setImageModels] = useState<ImageModel[]>(FALLBACK_IMAGE_MODELS);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isTaskHistoryOpen, setIsTaskHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [maskFiles, setMaskFiles] = useState<File[]>([]);
@@ -1746,6 +1748,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onDeleteConversation={openDeleteConversationConfirm}
             onRenameConversation={handleRenameConversation}
             formatConversationTime={formatConversationTime}
+            onOpenServerHistory={() => setIsTaskHistoryOpen(true)}
           />
         </div>
 
@@ -1780,6 +1783,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </DialogContent>
         </Dialog>
 
+        <ImageTaskHistoryDialog open={isTaskHistoryOpen} onOpenChange={setIsTaskHistoryOpen} />
+
         <div className="flex min-h-0 flex-col gap-2 sm:gap-4">
           <div className="flex items-center justify-between gap-2 px-1 lg:hidden">
             <Button
@@ -1796,6 +1801,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             >
               <Plus className="size-4" />
               新建
+            </Button>
+            <Button
+              variant="outline"
+              className="h-10 rounded-2xl border-stone-200 bg-white/85 px-3 text-stone-600 shadow-sm"
+              onClick={() => setIsTaskHistoryOpen(true)}
+              aria-label="服务端生图历史"
+              title="服务端生图历史"
+            >
+              <ServerCog className="size-4" />
             </Button>
             <Button
               variant="outline"

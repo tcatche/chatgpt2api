@@ -145,5 +145,28 @@ class ImageTaskServiceTests(unittest.TestCase):
             self.assertTrue(all("已中断" in item.get("error", "") for item in result["items"]))
 
 
+    def test_prompt_is_exposed_and_listed_in_server_history(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "image_tasks.json"
+            service = self.make_service(path)
+            service.submit_generation(
+                OWNER,
+                client_task_id="prompt-task",
+                prompt="a red fox",
+                model="gpt-image-2",
+                size="1024x1024",
+                base_url="http://local.test",
+            )
+            task = wait_for_task(service, OWNER, "prompt-task", "success")
+            self.assertEqual(task.get("prompt"), "a red fox")
+
+            history = service.list_tasks(OWNER, [])
+            self.assertEqual([item["id"] for item in history["items"]], ["prompt-task"])
+
+            reloaded = self.make_service(path)
+            reloaded_task = reloaded.list_tasks(OWNER, ["prompt-task"])["items"][0]
+            self.assertEqual(reloaded_task.get("prompt"), "a red fox")
+
+
 if __name__ == "__main__":
     unittest.main()

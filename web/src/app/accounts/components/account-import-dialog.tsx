@@ -36,6 +36,7 @@ import {
   type AccountImportPayload,
   type OAuthLoginStartResponse,
 } from "@/lib/api";
+import { getAccountJsonAccounts } from "@/lib/account-json-import";
 import { cn } from "@/lib/utils";
 
 type ImportMethod = "menu" | "token" | "session" | "codex-auth" | "account-json" | "oauth";
@@ -64,55 +65,6 @@ function splitTokens(value: string) {
 function getSessionAccessToken(value: unknown) {
   const token = (value as { accessToken?: unknown })?.accessToken;
   return typeof token === "string" ? token.trim() : "";
-}
-
-function getAccountJsonAccount(value: unknown): AccountImportPayload | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const raw = value as Record<string, unknown>;
-  const tokenValue = raw.access_token ?? raw.accessToken;
-  const token = typeof tokenValue === "string" ? tokenValue.trim() : "";
-  if (!token) {
-    return null;
-  }
-
-  const payload: AccountImportPayload = {
-    ...raw,
-    access_token: token,
-    source_type: "codex",
-  };
-  delete payload.accessToken;
-  if (payload.type === "codex") {
-    payload.export_type = "codex";
-    delete payload.type;
-  }
-  return payload;
-}
-
-function getAccountJsonAccounts(value: unknown): AccountImportPayload[] {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => getAccountJsonAccount(item))
-      .filter((item): item is AccountImportPayload => Boolean(item));
-  }
-
-  const singleAccount = getAccountJsonAccount(value);
-  if (singleAccount) {
-    return [singleAccount];
-  }
-
-  if (value && typeof value === "object") {
-    const raw = value as Record<string, unknown>;
-    const nested = raw.accounts ?? raw.items;
-    if (Array.isArray(nested)) {
-      return nested
-        .map((item) => getAccountJsonAccount(item))
-        .filter((item): item is AccountImportPayload => Boolean(item));
-    }
-  }
-
-  return [];
 }
 
 function getCodexAuthAccount(value: unknown): AccountImportPayload | null {
@@ -740,7 +692,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
         />
         <MethodCard
           title="导入账号 JSON 文件"
-          description="支持本项目导出的单账号 JSON 或全部账号数组，也兼容 CPA JSON 文件。"
+          description="支持本项目导出的单账号 JSON 或全部账号数组，也兼容 CPA、Sub2API JSON 文件。"
           icon={Files}
           onClick={() => setMethod("account-json")}
         />
@@ -807,7 +759,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                       ? "粘贴 Codex 认证 JSON，系统会按 codex 来源导入。"
                     : method === "oauth"
                       ? "用浏览器跑一遍 OpenAI 标准 OAuth，拿回 refresh_token 后系统会自动续期。"
-                      : "支持读取本项目导出的单账号对象或全部账号数组，并在提交前做数量确认。"}
+                      : "支持读取本项目导出的单账号对象、全部账号数组，以及 CPA、Sub2API JSON，并在提交前做数量确认。"}
             </DialogDescription>
           </DialogHeader>
 

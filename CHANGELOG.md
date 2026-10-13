@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.9.5 - 2026-10-13
+
++ [新增] “导入账号 JSON 文件”新增 Sub2API 导出格式兼容：自动摊平 `credentials` 中的 access_token、refresh_token、id_token、邮箱、账号 ID、用户 ID 与套餐类型，忽略 `type=oauth`、platform、并发等无关字段，来源标记为 codex。
+
 ## 1.9.4 - 2026-10-12
 
 + [同步] 合并上游 basketikun/chatgpt2api 1.8.0：新增默认上游模型名与思考强度配置，`/v1/models` 按账号类型汇总官方模型并按模型权限路由，数据库改为增量同步，新增“没出图也移除本地对话”配置，过滤内部工具消息与搜索指令，图片 SSE 流增加硬超时上限，修复输出清洗误删标点前空格。

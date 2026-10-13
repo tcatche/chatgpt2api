@@ -200,6 +200,7 @@ export type BackupInclude = {
   sub2api: boolean;
   logs: boolean;
   image_tasks: boolean;
+  image_conversations: boolean;
   accounts_snapshot: boolean;
   auth_keys_snapshot: boolean;
   images: boolean;

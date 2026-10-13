@@ -903,7 +903,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     ]);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
-    await saveImageConversation(conversation);
+    try {
+      await saveImageConversation(conversation);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
+      toast.error(`保存生图历史失败：${message}`);
+    }
   };
 
   const updateConversation = useCallback(
@@ -921,7 +926,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       conversationsRef.current = nextConversations;
       setConversations(nextConversations);
       if (options.persist !== false) {
-        await saveImageConversation(nextConversation);
+        try {
+          await saveImageConversation(nextConversation);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "未知错误";
+          toast.error(`保存生图历史失败：${message}`);
+        }
       }
     },
     [],

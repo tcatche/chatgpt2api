@@ -1003,9 +1003,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "删除会话失败";
       toast.error(message);
-      const items = await listImageConversations();
-      conversationsRef.current = items;
-      setConversations(items);
+      try {
+        const items = await listImageConversations();
+        conversationsRef.current = items;
+        setConversations(items);
+      } catch {
+        // 服务端回读失败时保留当前界面状态，避免二次报错
+      }
     }
   };
 

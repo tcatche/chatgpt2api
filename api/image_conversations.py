@@ -4,21 +4,18 @@ from typing import Any
 
 from fastapi import APIRouter, Header
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 
 from api.support import require_identity
 from services.image_conversation_service import image_conversation_service
 
 
-def _conversations_from_body(body: Any) -> list[dict[str, Any]]:
-    if isinstance(body, list):
-        return [item for item in body if isinstance(item, dict)]
-    if isinstance(body, dict):
-        conversations = body.get("conversations")
-        if isinstance(conversations, list):
-            return [item for item in conversations if isinstance(item, dict)]
-        if body.get("id"):
-            return [body]
-    return []
+class SaveImageConversationsRequest(BaseModel):
+    conversations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RenameImageConversationRequest(BaseModel):
+    title: str = ""
 
 
 def create_router() -> APIRouter:
@@ -30,26 +27,29 @@ def create_router() -> APIRouter:
         return await run_in_threadpool(image_conversation_service.list_conversations, identity)
 
     @router.post("/api/image-conversations")
-    async def save_image_conversations(body: Any, authorization: str | None = Header(default=None)):
+    async def save_image_conversations(
+        body: SaveImageConversationsRequest,
+        authorization: str | None = Header(default=None),
+    ):
         identity = require_identity(authorization)
-        conversations = _conversations_from_body(body)
-        return await run_in_threadpool(image_conversation_service.save_conversations, identity, conversations)
+        return await run_in_threadpool(
+            image_conversation_service.save_conversations,
+            identity,
+            body.conversations,
+        )
 
     @router.post("/api/image-conversations/{conversation_id}/rename")
     async def rename_image_conversation(
         conversation_id: str,
-        body: Any,
+        body: RenameImageConversationRequest,
         authorization: str | None = Header(default=None),
     ):
         identity = require_identity(authorization)
-        title = ""
-        if isinstance(body, dict):
-            title = str(body.get("title") or "")
         return await run_in_threadpool(
             image_conversation_service.rename_conversation,
             identity,
             conversation_id,
-            title,
+            body.title,
         )
 
     @router.delete("/api/image-conversations/{conversation_id}")

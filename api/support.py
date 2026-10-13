@@ -46,8 +46,26 @@ def require_admin(authorization: str | None) -> dict[str, object]:
     return identity
 
 
+def _first_forwarded_value(request: Request, header: str) -> str:
+    return request.headers.get(header, "").split(",")[0].strip()
+
+
 def resolve_image_base_url(request: Request) -> str:
-    return config.base_url or f"{request.url.scheme}://{request.headers.get('host', request.url.netloc)}"
+    """解析对外可访问的基础 URL。
+
+    优先级：显式配置 `base_url` > 反向代理转发头（X-Forwarded-Proto/Host）> 请求本身。
+    这样在 TLS 由反向代理终结时，生成的图片/文件链接也会是 https，避免混合内容被拦截。
+    """
+    configured = config.base_url
+    if configured:
+        return configured
+    forwarded_proto = _first_forwarded_value(request, "x-forwarded-proto").lower()
+    scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
+    host = (
+        _first_forwarded_value(request, "x-forwarded-host")
+        or request.headers.get("host", request.url.netloc)
+    )
+    return f"{scheme}://{host}"
 
 
 def raise_image_quota_error(exc: Exception) -> None:

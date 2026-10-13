@@ -13,7 +13,7 @@ const compiled = ts.transpileModule(source, {
   },
 }).outputText;
 
-global.window = { location: { origin: "https://app.test" } };
+global.window = { location: { origin: "https://app.test", protocol: "https:", host: "app.test" } };
 let objectUrlIndex = 0;
 const revokedUrls = [];
 URL.createObjectURL = () => `blob:cached-${++objectUrlIndex}`;
@@ -91,4 +91,26 @@ test("deleting an image removes its persistent entry and revokes its Blob URL", 
   await cache.deleteCachedImageSources(["/images/c.png"]);
   assert.equal(records.size, 0);
   assert.ok(revokedUrls.includes(loaded.src));
+});
+
+test("same-origin http image is upgraded to https on an https page", async () => {
+  const records = new Map();
+  const requested = [];
+  const cache = loadImageCache(records, async (url) => {
+    requested.push(url);
+    return new Response(new Blob(["image-d"], { type: "image/png" }), { status: 200 });
+  });
+  await cache.resolveCachedImage("http://app.test/images/d.png");
+  assert.equal(requested[0], "https://app.test/images/d.png");
+});
+
+test("cross-host http image keeps its scheme", async () => {
+  const records = new Map();
+  const requested = [];
+  const cache = loadImageCache(records, async (url) => {
+    requested.push(url);
+    return new Response(new Blob(["image-e"], { type: "image/png" }), { status: 200 });
+  });
+  await cache.resolveCachedImage("http://cdn.other.test/images/e.png");
+  assert.equal(requested[0], "http://cdn.other.test/images/e.png");
 });

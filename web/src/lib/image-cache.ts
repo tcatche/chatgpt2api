@@ -33,7 +33,17 @@ function normalizeSource(source: string) {
     return value;
   }
   try {
-    return new URL(value, window.location.origin).href;
+    const parsed = new URL(value, window.location.origin);
+    // HTTPS 页面下引用同源的 http 资源会被浏览器按混合内容拦截；
+    // 同源资源直接跟随当前页面协议，避免旧数据里的 http 链接失效。
+    if (
+      parsed.protocol === "http:" &&
+      window.location.protocol === "https:" &&
+      parsed.host === window.location.host
+    ) {
+      parsed.protocol = "https:";
+    }
+    return parsed.href;
   } catch {
     return value;
   }

@@ -470,6 +470,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const didLoadQuotaRef = useRef(false);
   const conversationsRef = useRef<ImageConversationSummary[]>([]);
   const hydratedConversationsRef = useRef<Map<string, ImageConversation>>(new Map());
+  const hydratingConversationsRef = useRef<Map<string, Promise<ImageConversation | null>>>(new Map());
   const loadCancelledRef = useRef(false);
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const lastConversationIdRef = useRef<string | null>(null);
@@ -504,6 +505,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const selectedConversationIdRef = useRef<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<ImageConversation | null>(null);
+  const [isConversationLoading, setIsConversationLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
@@ -927,23 +929,35 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     if (cached) {
       return cached;
     }
-    const loaded = await getImageConversation(id);
-    if (!loaded) {
-      return null;
+    const inFlight = hydratingConversationsRef.current.get(id);
+    if (inFlight) {
+      return inFlight;
     }
-    // 恢复中断的轮次 / 同步任务状态（仅针对该会话）
-    const [recovered] = await recoverConversationHistory([loaded]);
-    hydratedConversationsRef.current.set(recovered.id, recovered);
-    if (selectedConversationIdRef.current === recovered.id) {
-      setActiveConversation(recovered);
+    const task = (async () => {
+      const loaded = await getImageConversation(id);
+      if (!loaded) {
+        return null;
+      }
+      // 恢复中断的轮次 / 同步任务状态（仅针对该会话）
+      const [recovered] = await recoverConversationHistory([loaded]);
+      hydratedConversationsRef.current.set(recovered.id, recovered);
+      if (selectedConversationIdRef.current === recovered.id) {
+        setActiveConversation(recovered);
+      }
+      const nextConversations = sortImageConversations([
+        summaryFromConversation(recovered),
+        ...conversationsRef.current.filter((item) => item.id !== recovered.id),
+      ]);
+      conversationsRef.current = nextConversations;
+      setConversations(nextConversations);
+      return recovered;
+    })();
+    hydratingConversationsRef.current.set(id, task);
+    try {
+      return await task;
+    } finally {
+      hydratingConversationsRef.current.delete(id);
     }
-    const nextConversations = sortImageConversations([
-      summaryFromConversation(recovered),
-      ...conversationsRef.current.filter((item) => item.id !== recovered.id),
-    ]);
-    conversationsRef.current = nextConversations;
-    setConversations(nextConversations);
-    return recovered;
   }, []);
 
   const persistConversation = async (conversation: ImageConversation) => {
@@ -963,6 +977,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       options: { persist?: boolean } = {},
     ) => {
       const current = hydratedConversationsRef.current.get(conversationId) ?? (await hydrateConversation(conversationId));
+      if (!current) {
+        return;
+      }
       const nextConversation = updater(current);
       applyHydratedConversation(nextConversation);
       if (options.persist !== false) {
@@ -981,15 +998,32 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     selectedConversationIdRef.current = selectedConversationId;
     if (!selectedConversationId) {
       setActiveConversation(null);
+      setIsConversationLoading(false);
       return;
     }
     const cached = hydratedConversationsRef.current.get(selectedConversationId);
     if (cached) {
       setActiveConversation(cached);
+      setIsConversationLoading(false);
       return;
     }
     setActiveConversation(null);
-    void hydrateConversation(selectedConversationId);
+    setIsConversationLoading(true);
+    let cancelled = false;
+    void hydrateConversation(selectedConversationId)
+      .then((loaded) => {
+        if (!cancelled && !loaded) {
+          toast.error("读取会话失败，请稍后重试");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsConversationLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedConversationId, hydrateConversation]);
 
   useEffect(() => {
@@ -1759,6 +1793,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     if (selectedConversationId && !targetConversation) {
       targetConversation = await hydrateConversation(selectedConversationId);
     }
+    if (selectedConversationId && !targetConversation) {
+      toast.error("当前会话读取失败，请重试后再发送");
+      return;
+    }
     const now = new Date().toISOString();
     const conversationId = targetConversation?.id ?? createId();
     const turnId = createId();
@@ -1897,20 +1935,27 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               className="hide-scrollbar h-full overscroll-contain overflow-y-auto px-1 py-2 sm:px-4 sm:py-4"
               style={{ contain: "layout style paint" }}
             >
-              <ImageResults
-                selectedConversation={selectedConversation}
-                onOpenLightbox={openLightbox}
-                onContinueEdit={handleContinueEdit}
-                onAnnotateImage={handleAnnotateImage}
-                onDeletePrompt={openDeletePromptConfirm}
-                onDeleteResults={openDeleteResultsConfirm}
-                onReuseTurnConfig={handleReuseTurnConfig}
-                onRegenerateTurn={handleRegenerateTurn}
-                onRetryImage={handleRetryImage}
-                onTimeoutRetryContinue={handleTimeoutRetryContinue}
-                onDismissErrors={handleDismissErrors}
-                formatConversationTime={formatConversationTime}
-              />
+              {isConversationLoading && selectedConversationId ? (
+                <div className="flex h-full items-center justify-center gap-2 text-sm text-stone-500">
+                  <LoaderCircle className="size-4 animate-spin" />
+                  正在读取会话…
+                </div>
+              ) : (
+                <ImageResults
+                  selectedConversation={selectedConversation}
+                  onOpenLightbox={openLightbox}
+                  onContinueEdit={handleContinueEdit}
+                  onAnnotateImage={handleAnnotateImage}
+                  onDeletePrompt={openDeletePromptConfirm}
+                  onDeleteResults={openDeleteResultsConfirm}
+                  onReuseTurnConfig={handleReuseTurnConfig}
+                  onRegenerateTurn={handleRegenerateTurn}
+                  onRetryImage={handleRetryImage}
+                  onTimeoutRetryContinue={handleTimeoutRetryContinue}
+                  onDismissErrors={handleDismissErrors}
+                  formatConversationTime={formatConversationTime}
+                />
+              )}
             </div>
 
             <button

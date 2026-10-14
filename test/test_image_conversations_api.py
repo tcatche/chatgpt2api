@@ -12,6 +12,27 @@ from services import image_conversation_service as svc_mod
 from services.config import config
 
 
+def turn(turn_id: str = "t1", status: str = "success") -> dict:
+    return {
+        "id": turn_id,
+        "prompt": "a red fox",
+        "model": "gpt-image-2",
+        "mode": "generate",
+        "referenceImages": [
+            {"name": "ref.png", "type": "image/png", "dataUrl": "data:image/png;base64,AAAA"}
+        ],
+        "maskImages": [],
+        "count": 1,
+        "size": "1024x1024",
+        "ratio": "1:1",
+        "tier": "1k",
+        "quality": "auto",
+        "images": [{"id": "img-1", "status": "success", "url": "/images/a.png"}],
+        "createdAt": "2026-10-13T00:00:00.000Z",
+        "status": status,
+    }
+
+
 def conversation(conversation_id: str = "c1", updated_at: str = "2026-10-13T01:00:00.000Z") -> dict:
     return {
         "id": conversation_id,
@@ -19,24 +40,7 @@ def conversation(conversation_id: str = "c1", updated_at: str = "2026-10-13T01:0
         "model": "gpt-image-2",
         "createdAt": "2026-10-13T00:00:00.000Z",
         "updatedAt": updated_at,
-        "turns": [
-            {
-                "id": f"{conversation_id}-turn",
-                "prompt": "a red fox",
-                "model": "gpt-image-2",
-                "mode": "generate",
-                "referenceImages": [],
-                "maskImages": [],
-                "count": 1,
-                "size": "1024x1024",
-                "ratio": "1:1",
-                "tier": "1k",
-                "quality": "auto",
-                "images": [{"id": "img-1", "status": "success", "url": "/images/a.png"}],
-                "createdAt": "2026-10-13T00:00:00.000Z",
-                "status": "success",
-            }
-        ],
+        "turns": [turn()],
     }
 
 
@@ -51,51 +55,69 @@ class ImageConversationsApiTests(unittest.TestCase):
         self.client = TestClient(app)
         self.headers = {"Authorization": f"Bearer {config.auth_key}"}
 
-    def test_save_list_rename_delete_clear_round_trip(self):
-        # 保存（请求体是对象，验证不会被当成 query 参数）
+    def test_save_list_detail_rename_delete_clear_round_trip(self):
+        # 保存返回最小确认（不再返回整份列表）
         saved = self.client.post(
             "/api/image-conversations",
             json={"conversations": [conversation()]},
             headers=self.headers,
         )
         self.assertEqual(saved.status_code, 200)
-        self.assertEqual([item["id"] for item in saved.json()["items"]], ["c1"])
+        self.assertEqual(saved.json(), {"ok": True, "count": 1})
 
-        # 列出：不泄漏 owner_id，保留 prompt
+        # 列表是轻量摘要：有 turnCount/stats，不含 turns / base64
         listed = self.client.get("/api/image-conversations", headers=self.headers)
         self.assertEqual(listed.status_code, 200)
         items = listed.json()["items"]
-        self.assertEqual([item["id"] for item in items], ["c1"])
-        self.assertNotIn("owner_id", items[0])
-        self.assertEqual(items[0]["turns"][0]["prompt"], "a red fox")
+        self.assertEqual(len(items), 1)
+        summary = items[0]
+        self.assertEqual(summary["id"], "c1")
+        self.assertEqual(summary["turnCount"], 1)
+        self.assertEqual(summary["stats"], {"queued": 0, "running": 0})
+        self.assertNotIn("turns", summary)
+        self.assertNotIn("owner_id", summary)
+        self.assertNotIn("dataUrl", listed.text)
 
-        # 重命名
-        renamed = self.client.post(
-            "/api/image-conversations/c1/rename",
-            json={"title": "新名字"},
-            headers=self.headers,
+        # 详情返回完整内容（含参考图 base64）
+        detail = self.client.get("/api/image-conversations/c1", headers=self.headers)
+        self.assertEqual(detail.status_code, 200)
+        full = detail.json()["conversation"]
+        self.assertEqual(full["turns"][0]["prompt"], "a red fox")
+        self.assertEqual(full["turns"][0]["referenceImages"][0]["dataUrl"], "data:image/png;base64,AAAA")
+
+        # 缺失的会话 → 404
+        self.assertEqual(self.client.get("/api/image-conversations/nope", headers=self.headers).status_code, 404)
+
+        # 重命名 / 删除 / 清空都返回最小确认
+        self.assertEqual(
+            self.client.post(
+                "/api/image-conversations/c1/rename", json={"title": "新名字"}, headers=self.headers
+            ).json(),
+            {"ok": True},
         )
-        self.assertEqual(renamed.status_code, 200)
-        self.assertEqual(renamed.json()["items"][0]["title"], "新名字")
+        renamed = self.client.get("/api/image-conversations", headers=self.headers).json()["items"][0]
+        self.assertEqual(renamed["title"], "新名字")
 
-        # 删除单条
-        deleted = self.client.delete("/api/image-conversations/c1", headers=self.headers)
-        self.assertEqual(deleted.status_code, 200)
-        self.assertEqual(deleted.json()["items"], [])
+        self.assertEqual(
+            self.client.delete("/api/image-conversations/c1", headers=self.headers).json(),
+            {"ok": True},
+        )
+        self.assertEqual(self.client.get("/api/image-conversations", headers=self.headers).json()["items"], [])
 
-        # 清空（先再存一条）
         self.client.post(
             "/api/image-conversations",
             json={"conversations": [conversation("c2")]},
             headers=self.headers,
         )
-        cleared = self.client.delete("/api/image-conversations", headers=self.headers)
-        self.assertEqual(cleared.status_code, 200)
-        self.assertEqual(cleared.json()["items"], [])
+        self.assertEqual(
+            self.client.delete("/api/image-conversations", headers=self.headers).json(),
+            {"ok": True},
+        )
+        self.assertEqual(self.client.get("/api/image-conversations", headers=self.headers).json()["items"], [])
 
     def test_requires_authorization(self):
-        response = self.client.get("/api/image-conversations")
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.client.get("/api/image-conversations").status_code, 401)
+        self.assertEqual(self.client.get("/api/image-conversations/c1").status_code, 401)
 
 
 if __name__ == "__main__":

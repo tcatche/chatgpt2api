@@ -35,6 +35,7 @@ import { useSettingsStore } from "@/app/settings/store";
 import {
   clearImageConversations,
   deleteImageConversation,
+  getImageConversation,
   getImageConversationStats,
   listImageConversations,
   renameImageConversation,
@@ -42,6 +43,7 @@ import {
   saveImageConversations,
   type ImageConversation,
   type ImageConversationMode,
+  type ImageConversationSummary,
   type ImageTurn,
   type ImageTurnStatus,
   type StoredImage,
@@ -275,15 +277,27 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function pickFallbackConversationId(conversations: ImageConversation[]) {
-  const activeConversation = conversations.find((conversation) =>
-    conversation.turns.some((turn) => turn.status === "queued" || turn.status === "generating"),
+function pickFallbackConversationId(conversations: ImageConversationSummary[]) {
+  const activeConversation = conversations.find(
+    (conversation) => conversation.stats.queued + conversation.stats.running > 0,
   );
   return activeConversation?.id ?? conversations[0]?.id ?? null;
 }
 
-function sortImageConversations(conversations: ImageConversation[]) {
+function sortImageConversations(conversations: ImageConversationSummary[]) {
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function summaryFromConversation(conversation: ImageConversation): ImageConversationSummary {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    model: conversation.model,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    turnCount: conversation.turns.length,
+    stats: getImageConversationStats(conversation),
+  };
 }
 
 function deriveTurnStatus(turn: ImageTurn): Pick<ImageTurn, "status" | "error"> {
@@ -454,7 +468,8 @@ async function recoverConversationHistory(items: ImageConversation[]) {
 
 function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const didLoadQuotaRef = useRef(false);
-  const conversationsRef = useRef<ImageConversation[]>([]);
+  const conversationsRef = useRef<ImageConversationSummary[]>([]);
+  const hydratedConversationsRef = useRef<Map<string, ImageConversation>>(new Map());
   const loadCancelledRef = useRef(false);
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const lastConversationIdRef = useRef<string | null>(null);
@@ -485,8 +500,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [maskFiles, setMaskFiles] = useState<File[]>([]);
   const [maskImages, setMaskImages] = useState<StoredReferenceImage[]>([]);
-  const [conversations, setConversations] = useState<ImageConversation[]>([]);
+  const [conversations, setConversations] = useState<ImageConversationSummary[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const selectedConversationIdRef = useRef<string | null>(null);
+  const [activeConversation, setActiveConversation] = useState<ImageConversation | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
@@ -512,16 +529,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   } | null>(null);
 
   const parsedCount = useMemo(() => Number(clampImageCount(imageCount)), [imageCount]);
-  const selectedConversation = useMemo(
-    () => conversations.find((item) => item.id === selectedConversationId) ?? null,
-    [conversations, selectedConversationId],
-  );
+  const selectedConversation = activeConversation;
   const activeTaskCount = useMemo(
     () =>
-      conversations.reduce((sum, conversation) => {
-        const stats = getImageConversationStats(conversation);
-        return sum + stats.queued + stats.running;
-      }, 0),
+      conversations.reduce(
+        (sum, conversation) => sum + conversation.stats.queued + conversation.stats.running,
+        0,
+      ),
     [conversations],
   );
   const deleteConfirmTitle =
@@ -636,19 +650,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setImageCount(storedCount ? clampImageCount(storedCount) : "1");
 
       const items = await listImageConversations();
-      const normalizedItems = await recoverConversationHistory(items);
       if (loadCancelledRef.current) {
         return;
       }
 
-      conversationsRef.current = normalizedItems;
-      setConversations(normalizedItems);
+      conversationsRef.current = items;
+      setConversations(items);
       const storedConversationId =
         typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) : null;
       const nextSelectedConversationId =
-        (storedConversationId && normalizedItems.some((conversation) => conversation.id === storedConversationId)
+        (storedConversationId && items.some((conversation) => conversation.id === storedConversationId)
           ? storedConversationId
-          : null) ?? pickFallbackConversationId(normalizedItems);
+          : null) ?? pickFallbackConversationId(items);
       setSelectedConversationId(nextSelectedConversationId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "读取会话记录失败";
@@ -896,13 +909,45 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   }, [conversations, selectedConversationId]);
 
-  const persistConversation = async (conversation: ImageConversation) => {
+  const applyHydratedConversation = useCallback((conversation: ImageConversation) => {
+    hydratedConversationsRef.current.set(conversation.id, conversation);
+    if (selectedConversationIdRef.current === conversation.id) {
+      setActiveConversation(conversation);
+    }
     const nextConversations = sortImageConversations([
-      conversation,
+      summaryFromConversation(conversation),
       ...conversationsRef.current.filter((item) => item.id !== conversation.id),
     ]);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
+  }, []);
+
+  const hydrateConversation = useCallback(async (id: string): Promise<ImageConversation | null> => {
+    const cached = hydratedConversationsRef.current.get(id);
+    if (cached) {
+      return cached;
+    }
+    const loaded = await getImageConversation(id);
+    if (!loaded) {
+      return null;
+    }
+    // 恢复中断的轮次 / 同步任务状态（仅针对该会话）
+    const [recovered] = await recoverConversationHistory([loaded]);
+    hydratedConversationsRef.current.set(recovered.id, recovered);
+    if (selectedConversationIdRef.current === recovered.id) {
+      setActiveConversation(recovered);
+    }
+    const nextConversations = sortImageConversations([
+      summaryFromConversation(recovered),
+      ...conversationsRef.current.filter((item) => item.id !== recovered.id),
+    ]);
+    conversationsRef.current = nextConversations;
+    setConversations(nextConversations);
+    return recovered;
+  }, []);
+
+  const persistConversation = async (conversation: ImageConversation) => {
+    applyHydratedConversation(conversation);
     try {
       await saveImageConversation(conversation);
     } catch (error) {
@@ -917,14 +962,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       updater: (current: ImageConversation | null) => ImageConversation,
       options: { persist?: boolean } = {},
     ) => {
-      const current = conversationsRef.current.find((item) => item.id === conversationId) ?? null;
+      const current = hydratedConversationsRef.current.get(conversationId) ?? (await hydrateConversation(conversationId));
       const nextConversation = updater(current);
-      const nextConversations = sortImageConversations([
-        nextConversation,
-        ...conversationsRef.current.filter((item) => item.id !== conversationId),
-      ]);
-      conversationsRef.current = nextConversations;
-      setConversations(nextConversations);
+      applyHydratedConversation(nextConversation);
       if (options.persist !== false) {
         try {
           await saveImageConversation(nextConversation);
@@ -934,14 +974,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       }
     },
-    [],
+    [applyHydratedConversation, hydrateConversation],
   );
 
   useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+    if (!selectedConversationId) {
+      setActiveConversation(null);
+      return;
+    }
+    const cached = hydratedConversationsRef.current.get(selectedConversationId);
+    if (cached) {
+      setActiveConversation(cached);
+      return;
+    }
+    setActiveConversation(null);
+    void hydrateConversation(selectedConversationId);
+  }, [selectedConversationId, hydrateConversation]);
+
+  useEffect(() => {
     if (!selectedConversationId) return;
-    const conversation = conversationsRef.current.find((item) => item.id === selectedConversationId);
-    const conversationModel = conversation && imageModels.includes(conversation.model)
-      ? conversation.model
+    const summary = conversationsRef.current.find((item) => item.id === selectedConversationId);
+    const conversationModel = summary && imageModels.includes(summary.model)
+      ? summary.model
       : imageModels[0];
     if (conversationModel) {
       setImageModel(conversationModel);
@@ -988,10 +1043,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const handleDeleteConversation = async (id: string) => {
-    const removedConversation = conversations.find((item) => item.id === id);
+    const removedConversation = hydratedConversationsRef.current.get(id) ?? null;
     const nextConversations = conversations.filter((item) => item.id !== id);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
+    hydratedConversationsRef.current.delete(id);
     if (selectedConversationId === id) {
       setSelectedConversationId(pickFallbackConversationId(nextConversations));
       resetComposer();
@@ -1014,7 +1070,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const handleDeleteTurnPart = async (conversationId: string, turnId: string, part: "prompt" | "results") => {
-    const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+    const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
     if (!conversation) {
       return;
     }
@@ -1072,6 +1128,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       await clearCachedImages().catch(() => undefined);
       conversationsRef.current = [];
       setConversations([]);
+      hydratedConversationsRef.current.clear();
+      setActiveConversation(null);
       setSelectedConversationId(null);
       resetComposer();
       toast.success("已清空历史记录");
@@ -1082,11 +1140,20 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const handleRenameConversation = async (id: string, title: string) => {
+    const updatedAt = new Date().toISOString();
     const nextConversations = conversations.map((item) =>
-      item.id === id ? { ...item, title, updatedAt: new Date().toISOString() } : item,
+      item.id === id ? { ...item, title, updatedAt } : item,
     );
     conversationsRef.current = sortImageConversations(nextConversations);
     setConversations(conversationsRef.current);
+    const hydrated = hydratedConversationsRef.current.get(id);
+    if (hydrated) {
+      const nextHydrated = { ...hydrated, title, updatedAt };
+      hydratedConversationsRef.current.set(id, nextHydrated);
+      if (selectedConversationIdRef.current === id) {
+        setActiveConversation(nextHydrated);
+      }
+    }
     try {
       await renameImageConversation(id, title);
     } catch (error) {
@@ -1252,7 +1319,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   );
 
   const handleReuseTurnConfig = useCallback(async (conversationId: string, turnId: string) => {
-    const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+    const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
     const turn = conversation?.turns.find((item) => item.id === turnId);
     if (!conversation || !turn || !turn.prompt.trim()) {
       return;
@@ -1313,7 +1380,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         return;
       }
 
-      const snapshot = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+      const snapshot = hydratedConversationsRef.current.get(conversationId) ?? null;
       const activeTurn = snapshot?.turns.find(
         (turn) =>
           (turn.status === "queued" || turn.status === "generating") &&
@@ -1378,7 +1445,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         let consecutiveErrors = 0;
         const retryingTaskIdsRef = new Set<string>();
         while (true) {
-          const latestConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+          const latestConversation = hydratedConversationsRef.current.get(conversationId) ?? null;
           const latestTurn = latestConversation?.turns.find((turn) => turn.id === activeTurn.id);
           const loadingTaskIds =
             latestTurn?.images.flatMap((image) =>
@@ -1462,16 +1529,16 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         toast.error(message);
       } finally {
         activeConversationQueueIds.delete(conversationId);
-        for (const conversation of conversationsRef.current) {
+        for (const summary of conversationsRef.current) {
           if (
-            !activeConversationQueueIds.has(conversation.id) &&
-            conversation.turns.some(
-              (turn) =>
-                (turn.status === "queued" || turn.status === "generating") &&
-                turn.images.some((image) => image.status === "loading"),
-            )
+            !activeConversationQueueIds.has(summary.id) &&
+            summary.stats.queued + summary.stats.running > 0
           ) {
-            void runConversationQueue(conversation.id);
+            void hydrateConversation(summary.id).then((conversation) => {
+              if (conversation) {
+                void runConversationQueue(summary.id);
+              }
+            });
           }
         }
       }
@@ -1482,7 +1549,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const handleRegenerateTurn = useCallback(
     async (conversationId: string, turnId: string) => {
-      const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+      const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
       const sourceTurn = conversation?.turns.find((turn) => turn.id === turnId);
       if (!conversation || !sourceTurn || !sourceTurn.prompt.trim()) {
         return;
@@ -1523,7 +1590,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const handleRetryImage = useCallback(
     async (conversationId: string, turnId: string, imageId: string) => {
-      const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+      const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
       if (!conversation) {
         return;
       }
@@ -1577,7 +1644,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       await resumeImagePoll(taskId, imageTimeoutRetrySecs);
       // 将对应图片的状态重置为 loading，并清除错误
       void updateConversation(conversationId, (current) => {
-        const conversation = current ?? conversationsRef.current.find((c) => c.id === conversationId);
+        const conversation = current ?? hydratedConversationsRef.current.get(conversationId) ?? null;
         if (!conversation) return current!;
         return {
           ...conversation,
@@ -1613,7 +1680,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const { conversationId: convId, taskId, taskError } = timeoutRetry;
     // 将超时错误应用到对应图片
     void updateConversation(convId, (current) => {
-      const conversation = current ?? conversationsRef.current.find((c) => c.id === convId);
+      const conversation = current ?? hydratedConversationsRef.current.get(convId) ?? null;
       if (!conversation) return current!;
       return {
         ...conversation,
@@ -1640,7 +1707,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const handleDismissErrors = useCallback(
     async (conversationId: string, turnId: string) => {
       await updateConversation(conversationId, (current) => {
-        const conversation = current ?? conversationsRef.current.find((c) => c.id === conversationId);
+        const conversation = current ?? hydratedConversationsRef.current.get(conversationId) ?? null;
         if (!conversation) return current!;
         return {
           ...conversation,
@@ -1663,20 +1730,19 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   );
 
   useEffect(() => {
-    for (const conversation of conversations) {
+    for (const summary of conversations) {
       if (
-        !activeConversationQueueIds.has(conversation.id) &&
-        conversation.turns.some(
-          (turn) =>
-            !turn.resultsDeleted &&
-            (turn.status === "queued" || turn.status === "generating") &&
-            turn.images.some((image) => image.status === "loading"),
-        )
+        !activeConversationQueueIds.has(summary.id) &&
+        summary.stats.queued + summary.stats.running > 0
       ) {
-        void runConversationQueue(conversation.id);
+        void hydrateConversation(summary.id).then((conversation) => {
+          if (conversation) {
+            void runConversationQueue(summary.id);
+          }
+        });
       }
     }
-  }, [conversations, runConversationQueue]);
+  }, [conversations, runConversationQueue, hydrateConversation]);
 
   const handleSubmit = async () => {
     const prompt = imagePrompt.trim();
@@ -1687,9 +1753,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
     const effectiveImageMode: ImageConversationMode = referenceImageFiles.length > 0 ? "edit" : "generate";
 
-    const targetConversation = selectedConversationId
-      ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
+    let targetConversation = selectedConversationId
+      ? hydratedConversationsRef.current.get(selectedConversationId) ?? null
       : null;
+    if (selectedConversationId && !targetConversation) {
+      targetConversation = await hydrateConversation(selectedConversationId);
+    }
     const now = new Date().toISOString();
     const conversationId = targetConversation?.id ?? createId();
     const turnId = createId();

@@ -5,10 +5,10 @@ import { LoaderCircle, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { getImageConversationStats, type ImageConversation } from "@/store/image-conversations";
+import type { ImageConversationSummary } from "@/store/image-conversations";
 
 type ImageSidebarProps = {
-  conversations: ImageConversation[];
+  conversations: ImageConversationSummary[];
   isLoadingHistory: boolean;
   selectedConversationId: string | null;
   onCreateDraft: () => void;
@@ -43,7 +43,7 @@ export function ImageSidebar({
     }
   }, [editingId]);
 
-  const startRename = useCallback((conversation: ImageConversation, e: React.MouseEvent) => {
+  const startRename = useCallback((conversation: ImageConversationSummary, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingId(conversation.id);
     setEditingTitle(conversation.title);
@@ -98,7 +98,7 @@ export function ImageSidebar({
           ) : (
             conversations.map((conversation) => {
               const active = conversation.id === selectedConversationId;
-              const stats = getImageConversationStats(conversation);
+              const stats = conversation.stats;
               return (
                 <div
                   key={conversation.id}
@@ -134,7 +134,7 @@ export function ImageSidebar({
                       )}
                     </div>
                     <div className={cn("mt-1 text-xs", active ? "text-stone-500" : "text-stone-400")}>
-                      {conversation.turns.length} 轮 · {formatConversationTime(conversation.updatedAt)}
+                      {conversation.turnCount} 轮 · {formatConversationTime(conversation.updatedAt)}
                     </div>
                     {stats.running > 0 || stats.queued > 0 ? (
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">

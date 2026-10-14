@@ -63,8 +63,42 @@ export type ImageConversationStats = {
   running: number;
 };
 
-type ImageConversationListResponse = {
-  items: ImageConversation[];
+export type ImageConversationSummary = {
+  id: string;
+  title: string;
+  model: ImageModel;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
+  stats: ImageConversationStats;
+};
+
+type ImageConversationSummaryResponse = {
+  items: ImageConversationSummary[];
+};
+
+type ImageConversationResponse = {
+  conversation: ImageConversation;
+};
+
+function normalizeSummary(item: ImageConversationSummary): ImageConversationSummary {
+  return {
+    id: String(item.id || ""),
+    title: String(item.title || ""),
+    model: (item.model as ImageModel) || "gpt-image-2",
+    createdAt: String(item.createdAt || ""),
+    updatedAt: String(item.updatedAt || ""),
+    turnCount: Number(item.turnCount || 0),
+    stats: {
+      queued: Number(item.stats?.queued || 0),
+      running: Number(item.stats?.running || 0),
+    },
+  };
+}
+
+type MutationAck = {
+  ok: boolean;
+  count?: number;
 };
 
 function normalizeStoredImage(image: StoredImage): StoredImage {
@@ -207,34 +241,45 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
   };
 }
 
-function sortImageConversations(conversations: ImageConversation[]): ImageConversation[] {
-  return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+function sortSummaries(summaries: ImageConversationSummary[]): ImageConversationSummary[] {
+  return [...summaries].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function listImageConversations(): Promise<ImageConversation[]> {
-  const result = await httpRequest<ImageConversationListResponse>("/api/image-conversations");
-  return sortImageConversations((result.items || []).map((item) => normalizeConversation(item)));
+export async function listImageConversations(): Promise<ImageConversationSummary[]> {
+  const result = await httpRequest<ImageConversationSummaryResponse>("/api/image-conversations");
+  return sortSummaries((result.items || []).map(normalizeSummary));
+}
+
+export async function getImageConversation(id: string): Promise<ImageConversation | null> {
+  try {
+    const result = await httpRequest<ImageConversationResponse>(
+      `/api/image-conversations/${encodeURIComponent(id)}`,
+    );
+    return result.conversation ? normalizeConversation(result.conversation) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function saveImageConversations(conversations: ImageConversation[]): Promise<void> {
   if (conversations.length === 0) {
     return;
   }
-  await httpRequest<ImageConversationListResponse>("/api/image-conversations", {
+  await httpRequest<MutationAck>("/api/image-conversations", {
     method: "POST",
     body: { conversations },
   });
 }
 
 export async function saveImageConversation(conversation: ImageConversation): Promise<void> {
-  await httpRequest<ImageConversationListResponse>("/api/image-conversations", {
+  await httpRequest<MutationAck>("/api/image-conversations", {
     method: "POST",
     body: { conversations: [conversation] },
   });
 }
 
 export async function renameImageConversation(id: string, title: string): Promise<void> {
-  await httpRequest<ImageConversationListResponse>(
+  await httpRequest<MutationAck>(
     `/api/image-conversations/${encodeURIComponent(id)}/rename`,
     {
       method: "POST",
@@ -244,13 +289,13 @@ export async function renameImageConversation(id: string, title: string): Promis
 }
 
 export async function deleteImageConversation(id: string): Promise<void> {
-  await httpRequest<ImageConversationListResponse>(`/api/image-conversations/${encodeURIComponent(id)}`, {
+  await httpRequest<MutationAck>(`/api/image-conversations/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
 }
 
 export async function clearImageConversations(): Promise<void> {
-  await httpRequest<ImageConversationListResponse>("/api/image-conversations", {
+  await httpRequest<MutationAck>("/api/image-conversations", {
     method: "DELETE",
   });
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,18 @@ def create_router() -> APIRouter:
     async def list_image_conversations(authorization: str | None = Header(default=None)):
         identity = require_identity(authorization)
         return await run_in_threadpool(image_conversation_service.list_conversations, identity)
+
+    @router.get("/api/image-conversations/{conversation_id}")
+    async def get_image_conversation(conversation_id: str, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        conversation = await run_in_threadpool(
+            image_conversation_service.get_conversation,
+            identity,
+            conversation_id,
+        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail={"error": "conversation not found"})
+        return {"conversation": conversation}
 
     @router.post("/api/image-conversations")
     async def save_image_conversations(

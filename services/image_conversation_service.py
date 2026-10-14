@@ -53,15 +53,25 @@ class ImageConversationService:
         owner = _owner_id(identity)
         with self._lock:
             items = [
-                self._public(item)
+                self._summary(item)
                 for item in self._items.values()
                 if item.get("owner_id") == owner
             ]
         items.sort(key=lambda item: _timestamp(item.get("updatedAt")), reverse=True)
         return {"items": items}
 
+    def get_conversation(self, identity: dict[str, object], conversation_id: str) -> dict[str, Any] | None:
+        owner = _owner_id(identity)
+        key = _conversation_key(owner, _clean(conversation_id))
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                return None
+            return self._public(item)
+
     def save_conversations(self, identity: dict[str, object], conversations: list[dict[str, Any]]) -> dict[str, Any]:
         owner = _owner_id(identity)
+        saved = 0
         with self._lock:
             for raw in conversations:
                 if not isinstance(raw, dict):
@@ -80,8 +90,9 @@ class ImageConversationService:
                 if current is not None and _timestamp(current.get("updatedAt")) > _timestamp(incoming.get("updatedAt")):
                     continue
                 self._items[key] = incoming
+                saved += 1
             self._save_locked()
-        return self.list_conversations(identity)
+        return {"ok": True, "count": saved}
 
     def rename_conversation(self, identity: dict[str, object], conversation_id: str, title: str) -> dict[str, Any]:
         owner = _owner_id(identity)
@@ -92,7 +103,7 @@ class ImageConversationService:
                 current["title"] = _clean(title)
                 current["updatedAt"] = _now_iso()
                 self._save_locked()
-        return self.list_conversations(identity)
+        return {"ok": True}
 
     def delete_conversation(self, identity: dict[str, object], conversation_id: str) -> dict[str, Any]:
         owner = _owner_id(identity)
@@ -100,7 +111,7 @@ class ImageConversationService:
         with self._lock:
             if self._items.pop(key, None) is not None:
                 self._save_locked()
-        return self.list_conversations(identity)
+        return {"ok": True}
 
     def clear_conversations(self, identity: dict[str, object]) -> dict[str, Any]:
         owner = _owner_id(identity)
@@ -110,7 +121,30 @@ class ImageConversationService:
                 self._items.pop(key, None)
             if owned_keys:
                 self._save_locked()
-        return self.list_conversations(identity)
+        return {"ok": True}
+
+    @staticmethod
+    def _summary(item: dict[str, Any]) -> dict[str, Any]:
+        turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+        queued = 0
+        running = 0
+        for turn in turns:
+            if not isinstance(turn, dict) or turn.get("resultsDeleted"):
+                continue
+            status = _clean(turn.get("status"))
+            if status == "queued":
+                queued += 1
+            elif status == "generating":
+                running += 1
+        return {
+            "id": _clean(item.get("id")),
+            "title": _clean(item.get("title")),
+            "model": _clean(item.get("model")),
+            "createdAt": _clean(item.get("createdAt")),
+            "updatedAt": _clean(item.get("updatedAt")),
+            "turnCount": len(turns),
+            "stats": {"queued": queued, "running": running},
+        }
 
     @staticmethod
     def _public(item: dict[str, Any]) -> dict[str, Any]:

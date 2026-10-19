@@ -8,7 +8,8 @@ export type ImageConversationMode = "generate" | "edit";
 export type StoredReferenceImage = {
   name: string;
   type: string;
-  dataUrl: string;
+  dataUrl?: string;
+  url?: string;
 };
 
 export type StoredImage = {
@@ -126,8 +127,13 @@ function normalizeReferenceImage(image: StoredReferenceImage): StoredReferenceIm
   return {
     name: image.name || "reference.png",
     type: image.type || "image/png",
-    dataUrl: image.dataUrl,
+    dataUrl: typeof image.dataUrl === "string" && image.dataUrl ? image.dataUrl : undefined,
+    url: typeof image.url === "string" && image.url ? image.url : undefined,
   };
+}
+
+function hasReferenceSource(image: StoredReferenceImage) {
+  return Boolean(image.dataUrl || image.url);
 }
 
 function dataUrlMimeType(dataUrl: string) {
@@ -143,7 +149,7 @@ function getLegacyReferenceImages(source: Record<string, unknown>): StoredRefere
           return false;
         }
         const candidate = image as StoredReferenceImage;
-        return typeof candidate.dataUrl === "string" && candidate.dataUrl.length > 0;
+        return hasReferenceSource(candidate);
       })
       .map(normalizeReferenceImage);
   }
@@ -181,7 +187,7 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     referenceImages: getLegacyReferenceImages(turn),
     maskImages: Array.isArray(turn.maskImages)
       ? turn.maskImages
-          .filter((image): image is StoredReferenceImage => Boolean(image && typeof image.dataUrl === "string" && image.dataUrl))
+          .filter((image): image is StoredReferenceImage => Boolean(image && hasReferenceSource(image)))
           .map(normalizeReferenceImage)
       : [],
     count: Math.max(1, Number(turn.count || normalizedImages.length || 1)),

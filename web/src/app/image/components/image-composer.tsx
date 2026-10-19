@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ImageModel } from "@/lib/api";
+import type { StoredReferenceImage } from "@/store/image-conversations";
 import { cn } from "@/lib/utils";
 
 type ImageComposerProps = {
@@ -22,8 +23,8 @@ type ImageComposerProps = {
   imageModels: ImageModel[];
   availableQuota: string;
   activeTaskCount: number;
-  referenceImages: Array<{ name: string; dataUrl: string }>;
-  maskImages: Array<{ name: string; dataUrl: string }>;
+  referenceImages: StoredReferenceImage[];
+  maskImages: StoredReferenceImage[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
@@ -123,8 +124,8 @@ export function ImageComposer({
   const sizeMenuBtnRef = useRef<HTMLButtonElement>(null);
   const lightboxImages = useMemo(
     () => [
-      ...referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.dataUrl })),
-      ...maskImages.map((image, index) => ({ id: `mask-${image.name}-${index}`, src: image.dataUrl })),
+      ...referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.url || image.dataUrl || "" })),
+      ...maskImages.map((image, index) => ({ id: `mask-${image.name}-${index}`, src: image.url || image.dataUrl || "" })),
     ],
     [referenceImages, maskImages],
   );
@@ -256,7 +257,7 @@ export function ImageComposer({
                   aria-label={`预览参考图 ${image.name || index + 1}`}
                 >
                   <img
-                    src={image.dataUrl}
+                    src={image.url || image.dataUrl || ""}
                     alt={image.name || `参考图 ${index + 1}`}
                     className="h-full w-full object-cover"
                   />
@@ -286,7 +287,7 @@ export function ImageComposer({
                 aria-label={`预览标注遮罩 ${index + 1}（透明区域将重绘）`}
                 title="标注遮罩：透明区域将重绘"
               >
-                <img src={mask.dataUrl} alt={`标注遮罩 ${index + 1}`} className="h-full w-full object-contain" />
+                <img src={mask.url || mask.dataUrl || ""} alt={`标注遮罩 ${index + 1}`} className="h-full w-full object-contain" />
                 <span className="absolute inset-x-0 bottom-0 bg-stone-900/75 py-0.5 text-center text-[10px] text-white">遮罩</span>
               </button>
             ))}

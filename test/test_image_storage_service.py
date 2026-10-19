@@ -23,8 +23,8 @@ class FakeWebDAVClient:
     def __init__(self, _settings):
         pass
 
-    def put(self, rel: str, payload: bytes) -> str:
-        self.uploaded[rel] = payload
+    def put(self, rel: str, payload: bytes, content_type: str = "image/png") -> str:
+        FakeWebDAVClient.uploaded[rel] = payload
         return f"https://dav.example.test/{rel}"
 
     def get(self, rel: str) -> bytes:
@@ -133,6 +133,22 @@ class ImageStorageServiceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIn(".chatgpt2api_webdav_test.txt", FakeWebDAVClient.deleted)
+
+    def test_save_input_uses_inputs_prefix_and_public_url(self):
+        stored = self.service().save_input(png_bytes(), "http://app.test")
+
+        self.assertTrue(stored.rel.startswith("inputs/"))
+        self.assertTrue((self.images_dir / stored.rel).is_file())
+        self.assertEqual(stored.url, f"http://app.test/images/{stored.rel}")
+
+    def test_list_items_excludes_input_files(self):
+        normal = self.service().save(png_bytes(), "http://app.test")
+        stored_input = self.service().save_input(png_bytes(), "http://app.test")
+
+        rels = [item["rel"] for item in self.service().list_items("http://app.test")]
+
+        self.assertIn(normal.rel, rels)
+        self.assertNotIn(stored_input.rel, rels)
 
 
 if __name__ == "__main__":

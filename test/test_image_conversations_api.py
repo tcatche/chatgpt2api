@@ -119,6 +119,15 @@ class ImageConversationsApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/image-conversations").status_code, 401)
         self.assertEqual(self.client.get("/api/image-conversations/c1").status_code, 401)
 
+    def test_migrate_inputs_requires_admin_and_is_idempotent(self):
+        response = self.client.post("/api/image-conversations/migrate-inputs", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"converted": 0, "failed": 0})
+        self.assertEqual(
+            self.client.post("/api/image-conversations/migrate-inputs").status_code,
+            401,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

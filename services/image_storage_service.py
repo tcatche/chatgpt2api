@@ -18,7 +18,8 @@ from services.config import DATA_DIR, config
 
 IMAGE_INDEX_FILE = DATA_DIR / "image_index.json"
 IMAGE_INDEX_LOCK = Lock()
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+INPUT_PREFIX = "inputs"
 
 
 class ImageStorageError(RuntimeError):
@@ -65,6 +66,10 @@ def _is_image_rel(path: str) -> bool:
     except HTTPException:
         return False
     return Path(safe_rel).suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _is_input_rel(path: str) -> bool:
+    return str(path or "").split("/", 1)[0] == INPUT_PREFIX
 
 
 def _local_image_path(relative_path: str) -> Path:
@@ -196,15 +201,25 @@ class ImageStorageService:
             return f"{public_base_url.rstrip('/')}/{_safe_relative_path(rel)}"
         return f"{(base_url or config.base_url).rstrip('/')}/images/{_safe_relative_path(rel)}"
 
-    def make_relative_path(self, image_data: bytes) -> str:
+    def make_relative_path(self, image_data: bytes, *, prefix: str = "", extension: str = ".png") -> str:
         file_hash = hashlib.md5(image_data).hexdigest()
-        filename = f"{int(time.time())}_{file_hash}.png"
+        filename = f"{int(time.time())}_{file_hash}{extension}"
         relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
+        if prefix:
+            relative_dir = Path(prefix) / relative_dir
         return f"{relative_dir.as_posix()}/{filename}"
 
-    def save(self, image_data: bytes, base_url: str | None = None) -> StoredImage:
+    def save(
+        self,
+        image_data: bytes,
+        base_url: str | None = None,
+        *,
+        prefix: str = "",
+        extension: str = ".png",
+        content_type: str = "image/png",
+    ) -> StoredImage:
         config.cleanup_old_images()
-        rel = self.make_relative_path(image_data)
+        rel = self.make_relative_path(image_data, prefix=prefix, extension=extension)
         mode = self.mode()
         if mode not in {"local", "webdav", "both"}:
             mode = "local"
@@ -219,15 +234,18 @@ class ImageStorageService:
             stored_local = True
 
         if mode in {"webdav", "both"}:
-            remote_url = WebDAVClient(self.settings()).put(rel, image_data)
+            remote_url = WebDAVClient(self.settings()).put(rel, image_data, content_type=content_type)
             stored_webdav = True
 
         dimensions = _image_dimensions(image_data)
+        date_parts = rel.split("/")
+        if prefix:
+            date_parts = date_parts[1:]
         item = {
             "rel": rel,
             "path": rel,
             "name": Path(rel).name,
-            "date": "-".join(rel.split("/")[:3]),
+            "date": "-".join(date_parts[:3]),
             "size": len(image_data),
             "created_at": _now_iso(),
             "storage": "both" if stored_local and stored_webdav else ("webdav" if stored_webdav else "local"),
@@ -242,6 +260,22 @@ class ImageStorageService:
             items[rel] = item
             self._save_index(items)
         return StoredImage(rel=rel, url=self._public_url(rel, base_url), storage=str(item["storage"]), size=len(image_data))
+
+    def save_input(
+        self,
+        image_data: bytes,
+        base_url: str | None = None,
+        *,
+        extension: str = ".png",
+        content_type: str = "image/png",
+    ) -> StoredImage:
+        return self.save(
+            image_data,
+            base_url,
+            prefix=INPUT_PREFIX,
+            extension=extension,
+            content_type=content_type,
+        )
 
     def get_bytes(self, rel: str) -> bytes:
         safe_rel = _safe_relative_path(rel)
@@ -277,6 +311,8 @@ class ImageStorageService:
                 if not path.is_file() or not _is_image_rel(path.name):
                     continue
                 rel = path.relative_to(root).as_posix()
+                if _is_input_rel(rel):
+                    continue
                 if rel in indexed:
                     continue
                 dimensions = None
@@ -300,7 +336,7 @@ class ImageStorageService:
 
             items: list[dict[str, object]] = []
             for rel, item in list(indexed.items()):
-                if not _is_image_rel(rel):
+                if not _is_image_rel(rel) or _is_input_rel(rel):
                     indexed.pop(rel, None)
                     changed = True
                     continue

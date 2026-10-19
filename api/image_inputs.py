@@ -10,11 +10,13 @@ from typing import Any, TypeGuard
 from urllib.parse import unquote, unquote_to_bytes, urlparse
 
 from curl_cffi import requests
-from fastapi import HTTPException, Request
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile as FastAPIUploadFile
 from fastapi.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
+from api.support import require_identity, resolve_image_base_url
 from services.config import config
+from services.image_storage_service import image_storage_service
 from services.proxy_service import proxy_settings
 
 ImageInput = tuple[bytes, str, str]
@@ -23,6 +25,18 @@ ImageSource = str | UploadFile | ImageInput
 MAX_IMAGE_REFERENCE_BYTES = 50 * 1024 * 1024
 IMAGE_REFERENCE_FIELDS = {"image", "image[]", "images", "images[]", "image_url", "image_url[]"}
 MASK_REFERENCE_FIELDS = {"mask", "mask[]"}
+
+_IMAGE_EXTENSION_BY_MIME = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _extension_for_mime(mime_type: str) -> str:
+    return _IMAGE_EXTENSION_BY_MIME.get(mime_type.strip().lower(), ".png")
 
 
 def _clean(value: object, default: str = "") -> str:
@@ -308,3 +322,34 @@ async def read_image_sources(sources: list[ImageSource]) -> list[ImageInput]:
     if not images:
         raise HTTPException(status_code=400, detail={"error": "image file or image_url is required"})
     return images
+
+
+def create_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.post("/api/image-inputs")
+    async def upload_image_input(
+        request: Request,
+        file: FastAPIUploadFile = File(...),
+        authorization: str | None = Header(default=None),
+    ):
+        require_identity(authorization)
+        payload = await file.read()
+        if not payload:
+            raise HTTPException(status_code=400, detail={"error": "image file is empty"})
+        if len(payload) > MAX_IMAGE_REFERENCE_BYTES:
+            raise HTTPException(status_code=400, detail={"error": "image file exceeds 50MB limit"})
+        mime_type = _clean(file.content_type, "image/png")
+        if not mime_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail={"error": "file must be an image"})
+        base_url = resolve_image_base_url(request)
+        stored = await run_in_threadpool(
+            image_storage_service.save_input,
+            payload,
+            base_url,
+            extension=_extension_for_mime(mime_type),
+            content_type=mime_type,
+        )
+        return {"url": stored.url, "name": file.filename or "image", "type": mime_type}
+
+    return router

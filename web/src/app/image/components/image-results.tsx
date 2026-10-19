@@ -150,11 +150,11 @@ export function ImageResults({
         const referenceLightboxImages = [
           ...turn.referenceImages.map((image, index) => ({
             id: `${turn.id}-reference-${index}`,
-            src: image.dataUrl,
+            src: image.url || image.dataUrl || "",
           })),
           ...turn.maskImages.map((image, index) => ({
             id: `${turn.id}-mask-${index}`,
-            src: image.dataUrl,
+            src: image.url || image.dataUrl || "",
           })),
         ];
         const successfulTurnImages = turn.images.flatMap((image) => {
@@ -222,7 +222,7 @@ export function ImageResults({
                               aria-label={`预览参考图 ${image.name || index + 1}`}
                             >
                               <img
-                                src={image.dataUrl}
+                                src={image.url || image.dataUrl || ""}
                                 alt={image.name || `参考图 ${index + 1}`}
                                 className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
                               />
@@ -247,7 +247,7 @@ export function ImageResults({
                               aria-label={`预览标注遮罩 ${index + 1}`}
                             >
                               <img
-                                src={mask.dataUrl}
+                                src={mask.url || mask.dataUrl || ""}
                                 alt={`标注遮罩 ${index + 1}：透明区域将重绘`}
                                 className="absolute inset-0 h-full w-full object-contain"
                               />

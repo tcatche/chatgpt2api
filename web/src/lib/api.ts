@@ -477,6 +477,21 @@ export async function createImageGenerationTask(clientTaskId: string, prompt: st
   });
 }
 
+export type ImageInputUploadResponse = {
+  url: string;
+  name: string;
+  type: string;
+};
+
+export async function uploadImageInput(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpRequest<ImageInputUploadResponse>("/api/image-inputs", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 export async function createImageEditTask(
   clientTaskId: string,
   files: File | File[],

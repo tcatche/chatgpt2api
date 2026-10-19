@@ -25,6 +25,7 @@ import {
   fetchImageModelCatalog,
   fetchImageTasks,
   resumeImagePoll,
+  uploadImageInput,
   type Account,
   type ImageModel,
   type ImageTask,
@@ -180,6 +181,51 @@ function dataUrlToFile(dataUrl: string, fileName: string, mimeType?: string) {
   return new File([bytes], fileName, { type: mimeType || matchedMimeType || "image/png" });
 }
 
+async function referenceImageToFile(image: StoredReferenceImage, fallbackName: string): Promise<File> {
+  if (image.dataUrl) {
+    return dataUrlToFile(image.dataUrl, image.name || fallbackName, image.type);
+  }
+  if (!image.url) {
+    throw new Error("参考图缺失");
+  }
+  const blob = (await resolveCachedImage(image.url)).blob;
+  if (!blob) {
+    throw new Error("读取参考图失败");
+  }
+  return new File([blob], image.name || fallbackName, { type: image.type || blob.type || "image/png" });
+}
+
+async function uploadReferenceImages(images: StoredReferenceImage[]): Promise<StoredReferenceImage[]> {
+  const cache = new Map<string, StoredReferenceImage>();
+  const result: StoredReferenceImage[] = [];
+  for (const image of images) {
+    const key = image.url || image.dataUrl || "";
+    if (!key) {
+      continue;
+    }
+    const existing = cache.get(key);
+    if (existing) {
+      result.push(existing);
+      continue;
+    }
+    let stored: StoredReferenceImage;
+    if (image.url) {
+      stored = { name: image.name, type: image.type, url: image.url };
+    } else {
+      const file = dataUrlToFile(image.dataUrl!, image.name || "reference.png", image.type);
+      const uploaded = await uploadImageInput(file);
+      stored = {
+        name: image.name || uploaded.name,
+        type: image.type || uploaded.type,
+        url: uploaded.url,
+      };
+    }
+    cache.set(key, stored);
+    result.push(stored);
+  }
+  return result;
+}
+
 function normalizeStoredImageModel(value: string | null, availableModels: ImageModel[]): ImageModel {
   const normalized = String(value || "").trim();
   if (normalized && availableModels.includes(normalized)) {
@@ -216,7 +262,7 @@ function getConversationResultSources(conversation: ImageConversation | null | u
 
 async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
   const direct = buildReferenceImageFromResult(image, fileName);
-  if (direct) {
+  if (direct?.dataUrl) {
     return {
       referenceImage: direct,
       file: dataUrlToFile(direct.dataUrl, direct.name, direct.type),
@@ -522,9 +568,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [globalImageModel, setGlobalImageModel] = useState<ImageModel>("gpt-image-2");
   const [imageModels, setImageModels] = useState<ImageModel[]>(FALLBACK_IMAGE_MODELS);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
-  const [maskFiles, setMaskFiles] = useState<File[]>([]);
   const [maskImages, setMaskImages] = useState<StoredReferenceImage[]>([]);
   const [conversations, setConversations] = useState<ImageConversationSummary[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -1083,9 +1127,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const clearComposerInputs = useCallback(() => {
     setImagePrompt("");
-    setReferenceImageFiles([]);
     setReferenceImages([]);
-    setMaskFiles([]);
     setMaskImages([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -1275,7 +1317,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         })),
       );
 
-      setReferenceImageFiles((prev) => [...prev, ...files]);
       setReferenceImages((prev) => [...prev, ...previews]);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -1298,37 +1339,28 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   );
 
   const handleRemoveReferenceImage = useCallback((index: number) => {
-    setReferenceImageFiles((prev) => {
-      const next = prev.filter((_, currentIndex) => currentIndex !== index);
-      if (next.length === 0 && fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      return next;
-    });
+    if (referenceImages.length <= 1 && fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
     setReferenceImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
-    setMaskFiles([]);
     setMaskImages([]);
-  }, []);
+  }, [referenceImages.length]);
 
   const handleContinueEdit = useCallback(
     async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
       try {
-        const nextReference =
-          "dataUrl" in image
-            ? {
-                referenceImage: image,
-                file: dataUrlToFile(image.dataUrl, image.name, image.type),
-              }
-            : await buildReferenceImageFromStoredImage(image, `conversation-${conversationId}-${Date.now()}.png`);
+        const nextReference = "id" in image
+          ? (await buildReferenceImageFromStoredImage(
+              image,
+              `conversation-${conversationId}-${Date.now()}.png`,
+            ))?.referenceImage ?? null
+          : image;
         if (!nextReference) {
           return;
         }
 
         setSelectedConversationId(conversationId);
-
-        setReferenceImages((prev) => [...prev, nextReference.referenceImage]);
-        setReferenceImageFiles((prev) => [...prev, nextReference.file]);
-        setMaskFiles([]);
+        setReferenceImages((prev) => [...prev, nextReference]);
         setMaskImages([]);
         setImagePrompt("");
         textareaRef.current?.focus();
@@ -1355,7 +1387,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       const storedDrawing: StoredReferenceImage = { name: file.name, type: file.type || "image/png", dataUrl };
 
       if (drawingDialog.mode === "sketch") {
-        setReferenceImageFiles((current) => [...current, file]);
         setReferenceImages((current) => [...current, storedDrawing]);
         setImagePrompt("");
         textareaRef.current?.focus();
@@ -1371,9 +1402,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         throw new Error("无法读取要标注编辑的图片");
       }
       setSelectedConversationId(drawingDialog.conversationId);
-      setReferenceImageFiles([source.file]);
       setReferenceImages([source.referenceImage]);
-      setMaskFiles([file]);
       setMaskImages([storedDrawing]);
       setImagePrompt("");
       textareaRef.current?.focus();
@@ -1401,10 +1430,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setImageModel(turn.model);
     setReferenceImages(turn.referenceImages);
     setMaskImages(turn.maskImages);
-    setReferenceImageFiles(
-      turn.referenceImages.map((image) => dataUrlToFile(image.dataUrl, image.name, image.type)),
-    );
-    setMaskFiles(turn.maskImages.map((image) => dataUrlToFile(image.dataUrl, image.name, image.type)));
     await updateConversation(conversationId, (current) => ({
       ...(current ?? conversation),
       model: turn.model,
@@ -1485,11 +1510,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
       try {
 
-        const referenceFiles = activeTurn.referenceImages.map((image, index) =>
-          dataUrlToFile(image.dataUrl, image.name || `${activeTurn.id}-${index + 1}.png`, image.type),
+        const referenceFiles = await Promise.all(
+          activeTurn.referenceImages.map((image, index) =>
+            referenceImageToFile(image, image.name || `${activeTurn.id}-${index + 1}.png`),
+          ),
         );
-        const activeMaskFiles = activeTurn.maskImages.map((image, index) =>
-          dataUrlToFile(image.dataUrl, image.name || `${activeTurn.id}-mask-${index + 1}.png`, image.type),
+        const activeMaskFiles = await Promise.all(
+          activeTurn.maskImages.map((image, index) =>
+            referenceImageToFile(image, image.name || `${activeTurn.id}-mask-${index + 1}.png`),
+          ),
         );
         if (activeTurn.mode === "edit" && referenceFiles.length === 0) {
           throw new Error("未找到可用于继续编辑的参考图");
@@ -1810,6 +1839,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const executeBatch = async (batch: PendingBatch) => {
     const now = new Date().toISOString();
+    let resolvedReferences = batch.referenceImages;
+    let resolvedMasks = batch.maskImages;
+    if (batch.mode === "edit") {
+      try {
+        resolvedReferences = await uploadReferenceImages(batch.referenceImages);
+        resolvedMasks = await uploadReferenceImages(batch.maskImages);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "参考图上传失败";
+        toast.error(`参考图上传失败：${message}`);
+        return;
+      }
+    }
     const draftTurns: ImageTurn[] = batch.prompts.map((prompt) => {
       const turnId = createId();
       return {
@@ -1817,8 +1858,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         prompt,
         model: batch.model,
         mode: batch.mode,
-        referenceImages: batch.referenceImages,
-        maskImages: batch.maskImages,
+        referenceImages: resolvedReferences,
+        maskImages: resolvedMasks,
         count: batch.count,
         size: batch.size,
         ratio: batch.ratio,
@@ -1872,7 +1913,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    const effectiveImageMode: ImageConversationMode = referenceImageFiles.length > 0 ? "edit" : "generate";
+    const effectiveImageMode: ImageConversationMode = referenceImages.length > 0 ? "edit" : "generate";
 
     let targetConversation = selectedConversationId
       ? hydratedConversationsRef.current.get(selectedConversationId) ?? null
@@ -1904,6 +1945,19 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
+    let resolvedReferences: StoredReferenceImage[] = [];
+    let resolvedMasks: StoredReferenceImage[] = [];
+    if (effectiveImageMode === "edit") {
+      try {
+        resolvedReferences = await uploadReferenceImages(referenceImages);
+        resolvedMasks = await uploadReferenceImages(maskImages);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "参考图上传失败";
+        toast.error(`参考图上传失败：${message}`);
+        return;
+      }
+    }
+
     const now = new Date().toISOString();
     const conversationId = targetConversation?.id ?? createId();
     const turnId = createId();
@@ -1913,8 +1967,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       prompt: singlePrompt,
       model: targetConversation?.model || imageModel,
       mode: effectiveImageMode,
-      referenceImages: effectiveImageMode === "edit" ? referenceImages : [],
-      maskImages: effectiveImageMode === "edit" ? maskImages : [],
+      referenceImages: resolvedReferences,
+      maskImages: resolvedMasks,
       count: parsedCount,
       size: imageSize,
       ratio: imageRatio,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from datetime import datetime, timezone
@@ -34,6 +35,28 @@ def _timestamp(value: object) -> float:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
     except Exception:
         return 0.0
+
+
+_DATA_URL_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _decode_data_url(value: str) -> tuple[bytes, str, str]:
+    header, separator, payload = value.partition(",")
+    if not separator or not header.startswith("data:") or ";base64" not in header:
+        raise ValueError("invalid data url")
+    mime_type = header[5:].split(";", 1)[0].strip().lower() or "image/png"
+    data = base64.b64decode(payload)
+    if not data:
+        raise ValueError("empty image data")
+    if not mime_type.startswith("image/"):
+        mime_type = "image/png"
+    return data, _DATA_URL_EXTENSIONS.get(mime_type, ".png"), mime_type
 
 
 class ImageConversationService:
@@ -122,6 +145,66 @@ class ImageConversationService:
             if owned_keys:
                 self._save_locked()
         return {"ok": True}
+
+    def migrate_references(self, base_url: str) -> dict[str, int]:
+        """临时维护接口：把会话里内嵌的参考图/结果图 base64 迁移到图片存储。"""
+        from services.image_storage_service import image_storage_service
+
+        converted = 0
+        failed = 0
+        with self._lock:
+            for item in self._items.values():
+                turns = item.get("turns")
+                if not isinstance(turns, list):
+                    continue
+                for turn in turns:
+                    if not isinstance(turn, dict):
+                        continue
+                    for key in ("referenceImages", "maskImages"):
+                        images = turn.get(key)
+                        if not isinstance(images, list):
+                            continue
+                        for image in images:
+                            if not isinstance(image, dict) or image.get("url"):
+                                continue
+                            data_url = image.get("dataUrl")
+                            if not isinstance(data_url, str) or not data_url.startswith("data:"):
+                                continue
+                            try:
+                                payload, extension, content_type = _decode_data_url(data_url)
+                                stored = image_storage_service.save_input(
+                                    payload,
+                                    base_url,
+                                    extension=extension,
+                                    content_type=content_type,
+                                )
+                                image["url"] = stored.url
+                                image.pop("dataUrl", None)
+                                converted += 1
+                            except Exception:
+                                failed += 1
+                    images = turn.get("images")
+                    if not isinstance(images, list):
+                        continue
+                    for image in images:
+                        if not isinstance(image, dict) or image.get("url"):
+                            continue
+                        encoded = image.get("b64_json")
+                        if not isinstance(encoded, str) or not encoded:
+                            continue
+                        try:
+                            payload = base64.b64decode(encoded)
+                            if not payload:
+                                raise ValueError("empty image data")
+                            stored = image_storage_service.save_input(payload, base_url)
+                            image["url"] = stored.url
+                            image.pop("b64_json", None)
+                            converted += 1
+                        except Exception:
+                            failed += 1
+            if converted:
+                self._save_locked()
+        return {"converted": converted, "failed": failed}
 
     @staticmethod
     def _summary(item: dict[str, Any]) -> dict[str, Any]:

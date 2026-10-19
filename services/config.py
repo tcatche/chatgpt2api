@@ -608,8 +608,17 @@ class ConfigStore:
     def cleanup_old_images(self) -> int:
         cutoff = time.time() - self.image_retention_days * 86400
         removed = 0
-        for path in self.images_dir.rglob("*"):
-            if path.is_file() and path.stat().st_mtime < cutoff:
+        images_root = self.images_dir
+        for path in images_root.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                # 参考图/蒙版单独存放，不参与结果图的保留期清理
+                if path.relative_to(images_root).parts[:1] == ("inputs",):
+                    continue
+            except ValueError:
+                continue
+            if path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1
         for path in sorted((p for p in self.images_dir.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):

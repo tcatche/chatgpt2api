@@ -238,6 +238,10 @@ export function ImageComposer({
           }}
         />
 
+        <p className="mb-1 px-2 text-[11px] leading-5 text-stone-400 dark:text-stone-500">
+          提示：用 <span className="font-mono text-stone-600 dark:text-stone-300">|||</span> 分隔提示词，可一次生成多个任务
+        </p>
+
         {referenceImages.length > 0 ? (
           <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1 sm:mb-3 sm:flex-wrap sm:overflow-visible sm:pb-0">
             {referenceImages.map((image, index) => (

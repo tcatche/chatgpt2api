@@ -113,6 +113,31 @@ function buildConversationTitle(prompt: string) {
   return `${trimmed.slice(0, 12)}...`;
 }
 
+const BATCH_SOFT_LIMIT_PROMPTS = 20;
+const BATCH_SOFT_LIMIT_IMAGES = 50;
+
+function splitBatchPrompts(value: string) {
+  return value
+    .split(/\|{3,}|｜{3,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+type PendingBatch = {
+  prompts: string[];
+  count: number;
+  model: ImageModel;
+  mode: ImageConversationMode;
+  size: string;
+  ratio: string;
+  tier: string;
+  quality: string;
+  referenceImages: StoredReferenceImage[];
+  maskImages: StoredReferenceImage[];
+  conversationId: string;
+  targetConversation: ImageConversation | null;
+};
+
 function formatConversationTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -506,6 +531,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const selectedConversationIdRef = useRef<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<ImageConversation | null>(null);
   const [isConversationLoading, setIsConversationLoading] = useState(false);
+  const [pendingBatch, setPendingBatch] = useState<PendingBatch | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
@@ -560,6 +586,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           : deleteConfirm?.type === "one"
             ? "确认删除这条图片对话吗？删除后无法恢复。"
             : "";
+  const pendingBatchImageCount = pendingBatch ? pendingBatch.prompts.length * pendingBatch.count : 0;
+  const pendingBatchOverLimit = pendingBatch
+    ? pendingBatch.prompts.length > BATCH_SOFT_LIMIT_PROMPTS || pendingBatchImageCount > BATCH_SOFT_LIMIT_IMAGES
+    : false;
 
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -1778,9 +1808,66 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   }, [conversations, runConversationQueue, hydrateConversation]);
 
+  const executeBatch = async (batch: PendingBatch) => {
+    const now = new Date().toISOString();
+    const draftTurns: ImageTurn[] = batch.prompts.map((prompt) => {
+      const turnId = createId();
+      return {
+        id: turnId,
+        prompt,
+        model: batch.model,
+        mode: batch.mode,
+        referenceImages: batch.referenceImages,
+        maskImages: batch.maskImages,
+        count: batch.count,
+        size: batch.size,
+        ratio: batch.ratio,
+        tier: batch.tier,
+        quality: batch.quality,
+        images: createLoadingImages(turnId, batch.count),
+        createdAt: now,
+        status: "queued",
+      };
+    });
+    const targetConversation =
+      hydratedConversationsRef.current.get(batch.conversationId) ?? batch.targetConversation;
+    const baseConversation: ImageConversation = targetConversation
+      ? {
+          ...targetConversation,
+          model: targetConversation.model || batch.model,
+          updatedAt: now,
+          turns: [...targetConversation.turns, ...draftTurns],
+        }
+      : {
+          id: batch.conversationId,
+          title: buildConversationTitle(batch.prompts[0] ?? ""),
+          model: batch.model,
+          createdAt: now,
+          updatedAt: now,
+          turns: draftTurns,
+        };
+
+    shouldStickToBottomRef.current = true;
+    const btn = scrollToLatestBtnRef.current;
+    if (btn) btn.style.display = "none";
+    setSelectedConversationId(batch.conversationId);
+    clearComposerInputs();
+    setPendingBatch(null);
+
+    await persistConversation(baseConversation);
+    void runConversationQueue(batch.conversationId);
+    toast.success(`已拆分为 ${batch.prompts.length} 个任务，共 ${batch.prompts.length * batch.count} 张图`);
+  };
+
   const handleSubmit = async () => {
     const prompt = imagePrompt.trim();
     if (!prompt) {
+      toast.error("请输入提示词");
+      return;
+    }
+
+    const prompts = splitBatchPrompts(prompt);
+    if (prompts.length === 0) {
       toast.error("请输入提示词");
       return;
     }
@@ -1797,13 +1884,33 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       toast.error("当前会话读取失败，请重试后再发送");
       return;
     }
+
+    const imageSize = `${imageWidth || 1024}x${imageHeight || 1024}`;
+    if (prompts.length > 1) {
+      setPendingBatch({
+        prompts,
+        count: parsedCount,
+        model: targetConversation?.model || imageModel,
+        mode: effectiveImageMode,
+        size: imageSize,
+        ratio: imageRatio,
+        tier: imageTier,
+        quality: imageQuality,
+        referenceImages: effectiveImageMode === "edit" ? referenceImages : [],
+        maskImages: effectiveImageMode === "edit" ? maskImages : [],
+        conversationId: targetConversation?.id ?? createId(),
+        targetConversation,
+      });
+      return;
+    }
+
     const now = new Date().toISOString();
     const conversationId = targetConversation?.id ?? createId();
     const turnId = createId();
-    const imageSize = `${imageWidth || 1024}x${imageHeight || 1024}`;
+    const singlePrompt = prompts[0] ?? prompt;
     const draftTurn: ImageTurn = {
       id: turnId,
-      prompt,
+      prompt: singlePrompt,
       model: targetConversation?.model || imageModel,
       mode: effectiveImageMode,
       referenceImages: effectiveImageMode === "edit" ? referenceImages : [],
@@ -1827,7 +1934,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       : {
           id: conversationId,
-          title: buildConversationTitle(prompt),
+          title: buildConversationTitle(singlePrompt),
           model: imageModel,
           createdAt: now,
           updatedAt: now,
@@ -2021,6 +2128,37 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }}
         onApply={handleApplyDrawing}
       />
+
+      {pendingBatch ? (
+        <Dialog open onOpenChange={(open) => (!open ? setPendingBatch(null) : null)}>
+          <DialogContent showCloseButton={false} className="rounded-2xl p-6">
+            <DialogHeader className="gap-2">
+              <DialogTitle>批量生成确认</DialogTitle>
+              <DialogDescription className="text-sm leading-6">
+                将生成 {pendingBatch.prompts.length} 个任务，共 {pendingBatchImageCount} 张图。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[42vh] space-y-1 overflow-y-auto rounded-xl bg-stone-50 p-3 text-sm leading-6 text-stone-700 dark:bg-white/5 dark:text-stone-300">
+              {pendingBatch.prompts.map((item, index) => (
+                <div key={index} className="truncate" title={item}>
+                  {index + 1}. {item}
+                </div>
+              ))}
+            </div>
+            {pendingBatchOverLimit ? (
+              <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+                任务或图片数量较多（建议不超过 {BATCH_SOFT_LIMIT_PROMPTS} 个任务 / {BATCH_SOFT_LIMIT_IMAGES} 张图），将消耗较多额度。
+              </p>
+            ) : null}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPendingBatch(null)}>
+                取消
+              </Button>
+              <Button onClick={() => pendingBatch && void executeBatch(pendingBatch)}>开始生成</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {deleteConfirm ? (
         <Dialog open onOpenChange={(open) => (!open ? setDeleteConfirm(null) : null)}>

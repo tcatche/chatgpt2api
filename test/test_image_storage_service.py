@@ -7,6 +7,7 @@ from unittest import mock
 
 from PIL import Image
 
+from services.config import _normalize_image_storage_settings
 from services.image_storage_service import ImageStorageService
 
 
@@ -149,6 +150,23 @@ class ImageStorageServiceTests(unittest.TestCase):
 
         self.assertIn(normal.rel, rels)
         self.assertNotIn(stored_input.rel, rels)
+
+    def test_disabled_storage_keeps_inputs_local_even_if_mode_is_webdav(self):
+        self.settings.update({
+            "enabled": False,
+            "mode": "webdav",
+            "webdav_url": "https://dav.example.test",
+            "webdav_password": "secret",
+        })
+        normalized = _normalize_image_storage_settings(self.settings)
+        self.mock_config.get_image_storage_settings.side_effect = lambda: dict(normalized)
+
+        with mock.patch("services.image_storage_service.WebDAVClient", FakeWebDAVClient):
+            stored = self.service().save_input(png_bytes(), "http://app.test")
+
+        self.assertEqual(stored.storage, "local")
+        self.assertTrue((self.images_dir / stored.rel).is_file())
+        self.assertEqual(FakeWebDAVClient.uploaded, {})
 
 
 if __name__ == "__main__":

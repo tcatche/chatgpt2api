@@ -52,6 +52,14 @@ class ImageInputsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_upload_rejects_unsupported_image_type(self):
+        response = self.client.post(
+            "/api/image-inputs",
+            files={"file": ("vector.svg", b"<svg/>", "image/svg+xml")},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_upload_rejects_empty_file(self):
         response = self.client.post(
             "/api/image-inputs",

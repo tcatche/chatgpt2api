@@ -164,13 +164,15 @@ class ImageConversationServiceTests(unittest.TestCase):
         )
         data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
         encoded = base64.b64encode(image_bytes).decode("ascii")
+        svg_data_url = "data:image/svg+xml;base64," + base64.b64encode(b"<svg/>").decode("ascii")
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "image_conversations.json"
             service = self.make_service(path)
             raw = conversation("c1", "2026-10-13T01:00:00.000Z", turns=[turn("t1")])
             raw["turns"][0]["referenceImages"] = [
-                {"name": "ref.png", "type": "image/png", "dataUrl": data_url}
+                {"name": "ref.png", "type": "image/png", "dataUrl": data_url},
+                {"name": "vector.svg", "type": "image/svg+xml", "dataUrl": svg_data_url},
             ]
             raw["turns"][0]["maskImages"] = [
                 {"name": "mask.png", "type": "image/png", "dataUrl": data_url}
@@ -196,13 +198,15 @@ class ImageConversationServiceTests(unittest.TestCase):
             ):
                 result = service.migrate_references("http://app.test")
 
-            self.assertEqual(result, {"converted": 3, "failed": 0})
+            self.assertEqual(result, {"converted": 3, "failed": 1})
             self.assertEqual(len(calls), 3)
 
             migrated = service.get_conversation(OWNER, "c1")
             migrated_turn = migrated["turns"][0]
             self.assertNotIn("dataUrl", migrated_turn["referenceImages"][0])
             self.assertTrue(migrated_turn["referenceImages"][0]["url"].startswith("https://cdn.test/inputs/"))
+            self.assertIn("dataUrl", migrated_turn["referenceImages"][1])
+            self.assertNotIn("url", migrated_turn["referenceImages"][1])
             self.assertNotIn("dataUrl", migrated_turn["maskImages"][0])
             self.assertNotIn("b64_json", migrated_turn["images"][0])
             self.assertTrue(migrated_turn["images"][0]["url"].startswith("https://cdn.test/inputs/"))
@@ -210,8 +214,8 @@ class ImageConversationServiceTests(unittest.TestCase):
             reloaded = self.make_service(path)
             again = reloaded.get_conversation(OWNER, "c1")
             self.assertEqual(again["turns"][0]["referenceImages"][0]["url"], migrated_turn["referenceImages"][0]["url"])
-            # 迁移是幂等的：已经带 url 的条目不会再处理
-            self.assertEqual(reloaded.migrate_references("http://app.test"), {"converted": 0, "failed": 0})
+            # 已迁移的条目不会再处理；不支持的格式保留原样并计入 failed
+            self.assertEqual(reloaded.migrate_references("http://app.test"), {"converted": 0, "failed": 1})
 
 
 if __name__ == "__main__":

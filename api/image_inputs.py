@@ -33,6 +33,7 @@ _IMAGE_EXTENSION_BY_MIME = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+_ALLOWED_INPUT_MIME_TYPES = set(_IMAGE_EXTENSION_BY_MIME)
 
 
 def _extension_for_mime(mime_type: str) -> str:
@@ -339,9 +340,9 @@ def create_router() -> APIRouter:
             raise HTTPException(status_code=400, detail={"error": "image file is empty"})
         if len(payload) > MAX_IMAGE_REFERENCE_BYTES:
             raise HTTPException(status_code=400, detail={"error": "image file exceeds 50MB limit"})
-        mime_type = _clean(file.content_type, "image/png")
-        if not mime_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail={"error": "file must be an image"})
+        mime_type = _clean(file.content_type, "image/png").lower()
+        if mime_type not in _ALLOWED_INPUT_MIME_TYPES:
+            raise HTTPException(status_code=400, detail={"error": "unsupported image type"})
         base_url = resolve_image_base_url(request)
         stored = await run_in_threadpool(
             image_storage_service.save_input,

@@ -54,9 +54,10 @@ def _decode_data_url(value: str) -> tuple[bytes, str, str]:
     data = base64.b64decode(payload)
     if not data:
         raise ValueError("empty image data")
-    if not mime_type.startswith("image/"):
-        mime_type = "image/png"
-    return data, _DATA_URL_EXTENSIONS.get(mime_type, ".png"), mime_type
+    extension = _DATA_URL_EXTENSIONS.get(mime_type)
+    if extension is None:
+        raise ValueError("unsupported image type")
+    return data, extension, mime_type
 
 
 class ImageConversationService:

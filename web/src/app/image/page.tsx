@@ -170,6 +170,25 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
+const ACCEPTED_REFERENCE_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
+
+function isAcceptedReferenceImage(file: File) {
+  const type = String(file.type || "").toLowerCase();
+  if (ACCEPTED_REFERENCE_IMAGE_TYPES.has(type)) {
+    return true;
+  }
+  if (type && type !== "application/octet-stream") {
+    return false;
+  }
+  return /\.(png|jpe?g|webp|gif)$/i.test(file.name || "");
+}
+
 function dataUrlToFile(dataUrl: string, fileName: string, mimeType?: string) {
   const [header, content] = dataUrl.split(",", 2);
   const matchedMimeType = header.match(/data:(.*?);base64/)?.[1];
@@ -1308,9 +1327,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
+    const accepted = files.filter(isAcceptedReferenceImage);
+    if (accepted.length === 0) {
+      toast.error("不支持的图片格式，请使用 JPG / PNG / WebP / GIF");
+      return;
+    }
+    if (accepted.length < files.length) {
+      toast.error("部分图片格式不支持，已跳过（请使用 JPG / PNG / WebP / GIF）");
+    }
+
     try {
       const previews = await Promise.all(
-        files.map(async (file) => ({
+        accepted.map(async (file) => ({
           name: file.name,
           type: file.type || "image/png",
           dataUrl: await readFileAsDataUrl(file),
@@ -2157,7 +2185,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onImageQualityChange={setImageQuality}
             onImageModelChange={(model) => void handleConversationModelChange(model)}
             onSubmit={handleSubmit}
-            onPickReferenceImage={() => fileInputRef.current?.click()}
             onReferenceImageChange={handleReferenceImageChange}
             onRemoveReferenceImage={handleRemoveReferenceImage}
             onOpenSketch={() => setDrawingDialog({ mode: "sketch" })}

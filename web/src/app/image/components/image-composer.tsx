@@ -36,7 +36,6 @@ type ImageComposerProps = {
   onImageQualityChange: (value: string) => void;
   onImageModelChange: (value: ImageModel) => void;
   onSubmit: () => void | Promise<void>;
-  onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
   onRemoveReferenceImage: (index: number) => void;
   onOpenSketch: () => void;
@@ -110,7 +109,6 @@ export function ImageComposer({
   onImageQualityChange,
   onImageModelChange,
   onSubmit,
-  onPickReferenceImage,
   onReferenceImageChange,
   onRemoveReferenceImage,
   onOpenSketch,
@@ -229,6 +227,7 @@ export function ImageComposer({
     <div className="shrink-0 flex justify-center px-1 sm:px-0">
       <div style={{ width: "min(980px, 100%)" }}>
         <input
+          id="image-reference-input"
           ref={fileInputRef}
           type="file"
           accept="image/*"
@@ -347,16 +346,14 @@ export function ImageComposer({
             <div className="rounded-b-[24px] border-t border-stone-100 bg-white px-3 pb-3 pt-2 dark:border-white/10 dark:bg-stone-950/95 sm:absolute sm:inset-x-0 sm:bottom-0 sm:rounded-b-none sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6 sm:dark:from-stone-950 sm:dark:via-stone-950/95 sm:dark:to-stone-950/0" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-end justify-between gap-2 sm:gap-3">
                 <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 shrink-0 rounded-full border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none sm:h-10 sm:px-4 sm:text-sm"
-                    onClick={onPickReferenceImage}
+                  <label
+                    htmlFor="image-reference-input"
+                    className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none transition hover:bg-stone-50 sm:h-10 sm:px-4 sm:text-sm"
                     aria-label={referenceImages.length > 0 ? "添加参考图" : "上传"}
                   >
                     <ImagePlus className="size-3.5 sm:size-4" />
                     <span className="hidden sm:inline">{referenceImages.length > 0 ? "添加参考图" : "上传"}</span>
-                  </Button>
+                  </label>
                   <Button
                     type="button"
                     variant="outline"

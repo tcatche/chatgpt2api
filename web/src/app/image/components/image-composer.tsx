@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ImageModel } from "@/lib/api";
+import { debugLog } from "@/lib/debug-log";
 import type { StoredReferenceImage } from "@/store/image-conversations";
 import { cn } from "@/lib/utils";
 
@@ -233,8 +234,25 @@ export function ImageComposer({
           accept="image/*"
           multiple
           className="hidden"
+          onClick={() => {
+            debugLog("info", "file input 被点击");
+          }}
           onChange={(event) => {
-            void onReferenceImageChange(Array.from(event.target.files || []));
+            const files = Array.from(event.target.files || []);
+            debugLog("info", "file input onChange 触发", {
+              count: files.length,
+              files: files.map((file) => ({
+                name: file.name,
+                type: file.type,
+                size: file.size,
+              })),
+            });
+            void onReferenceImageChange(files);
+          }}
+          onInput={(event) => {
+            debugLog("info", "file input onInput 触发", {
+              count: event.currentTarget.files?.length ?? 0,
+            });
           }}
         />
 
@@ -350,6 +368,9 @@ export function ImageComposer({
                     htmlFor="image-reference-input"
                     className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none transition hover:bg-stone-50 sm:h-10 sm:px-4 sm:text-sm"
                     aria-label={referenceImages.length > 0 ? "添加参考图" : "上传"}
+                    onClick={() => {
+                      debugLog("info", "点击上传标签");
+                    }}
                   >
                     <ImagePlus className="size-3.5 sm:size-4" />
                     <span className="hidden sm:inline">{referenceImages.length > 0 ? "添加参考图" : "上传"}</span>

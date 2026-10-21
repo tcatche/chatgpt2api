@@ -31,6 +31,7 @@ import {
   type ImageTask,
 } from "@/lib/api";
 import { clearCachedImages, deleteCachedImageSources, resolveCachedImage } from "@/lib/image-cache";
+import { debugLog } from "@/lib/debug-log";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { useSettingsStore } from "@/app/settings/store";
 import {
@@ -657,6 +658,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    debugLog("info", "referenceImages 状态变化", {
+      count: referenceImages.length,
+      names: referenceImages.map((image) => image.name),
+      dataUrlLengths: referenceImages.map((image) => image.dataUrl?.length ?? 0),
+      urls: referenceImages.map((image) => image.url ?? ""),
+    });
+  }, [referenceImages]);
 
   const scrollResultsToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     const element = resultsViewportRef.current;
@@ -1323,11 +1333,32 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const appendReferenceImages = useCallback(async (files: File[]) => {
+    debugLog("info", "appendReferenceImages 收到文件", {
+      count: files.length,
+      files: files.map((file) => ({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        lastModified: file.lastModified,
+      })),
+    });
+
     if (files.length === 0) {
+      debugLog("warn", "文件列表为空（选择器未返回文件，或 change 事件里没有文件）");
       return;
     }
 
-    const accepted = files.filter(isAcceptedReferenceImage);
+    const accepted = files.filter((file) => {
+      const acceptedFile = isAcceptedReferenceImage(file);
+      debugLog(acceptedFile ? "info" : "warn", `格式校验${acceptedFile ? "通过" : "拒绝"}`, {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+      });
+      return acceptedFile;
+    });
+    debugLog("info", "格式校验汇总", { total: files.length, accepted: accepted.length });
+
     if (accepted.length === 0) {
       toast.error("不支持的图片格式，请使用 JPG / PNG / WebP / GIF");
       return;
@@ -1338,18 +1369,35 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
     try {
       const previews = await Promise.all(
-        accepted.map(async (file) => ({
-          name: file.name,
-          type: file.type || "image/png",
-          dataUrl: await readFileAsDataUrl(file),
-        })),
+        accepted.map(async (file) => {
+          debugLog("info", "开始读取参考图", { name: file.name, type: file.type });
+          const dataUrl = await readFileAsDataUrl(file);
+          debugLog("info", "读取参考图完成", {
+            name: file.name,
+            length: dataUrl.length,
+            head: dataUrl.slice(0, 40),
+          });
+          return {
+            name: file.name,
+            type: file.type || "image/png",
+            dataUrl,
+          };
+        }),
       );
 
+      debugLog("info", "准备写入 referenceImages", {
+        count: previews.length,
+        names: previews.map((preview) => preview.name),
+      });
       setReferenceImages((prev) => [...prev, ...previews]);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     } catch (error) {
+      debugLog("error", "读取参考图失败", {
+        name: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error),
+      });
       const message = error instanceof Error ? error.message : "读取参考图失败";
       toast.error(message);
     }
@@ -1357,6 +1405,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const handleReferenceImageChange = useCallback(
     async (files: File[]) => {
+      debugLog("info", "handleReferenceImageChange 被调用", {
+        count: files.length,
+        names: files.map((file) => file.name),
+      });
       if (files.length === 0) {
         return;
       }
@@ -1367,6 +1419,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   );
 
   const handleRemoveReferenceImage = useCallback((index: number) => {
+    debugLog("info", "移除参考图", { index, remaining: referenceImages.length - 1 });
     if (referenceImages.length <= 1 && fileInputRef.current) {
       fileInputRef.current.value = "";
     }

@@ -227,35 +227,6 @@ export function ImageComposer({
   return (
     <div className="shrink-0 flex justify-center px-1 sm:px-0">
       <div style={{ width: "min(980px, 100%)" }}>
-        <input
-          id="image-reference-input"
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onClick={() => {
-            debugLog("info", "file input 被点击");
-          }}
-          onChange={(event) => {
-            const files = Array.from(event.target.files || []);
-            debugLog("info", "file input onChange 触发", {
-              count: files.length,
-              files: files.map((file) => ({
-                name: file.name,
-                type: file.type,
-                size: file.size,
-              })),
-            });
-            void onReferenceImageChange(files);
-          }}
-          onInput={(event) => {
-            debugLog("info", "file input onInput 触发", {
-              count: event.currentTarget.files?.length ?? 0,
-            });
-          }}
-        />
-
         <p className="mb-1 px-2 text-[11px] leading-5 text-stone-400 dark:text-stone-500">
           提示：用 <span className="font-mono text-stone-600 dark:text-stone-300">|||</span> 分隔提示词，可一次生成多个任务
         </p>
@@ -365,15 +336,42 @@ export function ImageComposer({
               <div className="flex items-end justify-between gap-2 sm:gap-3">
                 <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
                   <label
-                    htmlFor="image-reference-input"
-                    className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none transition hover:bg-stone-50 sm:h-10 sm:px-4 sm:text-sm"
+                    className="relative inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none transition hover:bg-stone-50 sm:h-10 sm:px-4 sm:text-sm"
                     aria-label={referenceImages.length > 0 ? "添加参考图" : "上传"}
                     onClick={() => {
                       debugLog("info", "点击上传标签");
                     }}
                   >
-                    <ImagePlus className="size-3.5 sm:size-4" />
-                    <span className="hidden sm:inline">{referenceImages.length > 0 ? "添加参考图" : "上传"}</span>
+                    <input
+                      id="image-reference-input"
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="absolute inset-0 z-10 size-full cursor-pointer opacity-0"
+                      onClick={() => {
+                        debugLog("info", "file input 被点击");
+                      }}
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files || []);
+                        debugLog("info", "file input onChange 触发", {
+                          count: files.length,
+                          files: files.map((file) => ({
+                            name: file.name,
+                            type: file.type,
+                            size: file.size,
+                          })),
+                        });
+                        void onReferenceImageChange(files);
+                      }}
+                      onInput={(event) => {
+                        debugLog("info", "file input onInput 触发", {
+                          count: event.currentTarget.files?.length ?? 0,
+                        });
+                      }}
+                    />
+                    <ImagePlus className="pointer-events-none size-3.5 sm:size-4" />
+                    <span className="pointer-events-none hidden sm:inline">{referenceImages.length > 0 ? "添加参考图" : "上传"}</span>
                   </label>
                   <Button
                     type="button"

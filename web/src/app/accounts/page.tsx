@@ -133,6 +133,91 @@ function formatQuotaSummary(accounts: Account[]) {
   return formatCompact(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
 }
 
+function formatAccountTimestamp(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  const pad = (num: number) => String(num).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
+function accountStatusTitle(account: Account) {
+  const lines: string[] = [];
+  if (account.last_refresh_error) {
+    const at = formatAccountTimestamp(account.last_refresh_error_at);
+    lines.push(`最近异常：${account.last_refresh_error}${at ? `（${at}）` : ""}`);
+  }
+  if (account.last_token_refresh_error) {
+    const at = formatAccountTimestamp(account.last_token_refresh_error_at);
+    lines.push(`续期失败：${account.last_token_refresh_error}${at ? `（${at}）` : ""}`);
+  }
+  const invalidCount = Number(account.invalid_count || 0);
+  if (invalidCount > 0) {
+    const at = formatAccountTimestamp(account.last_invalid_at);
+    lines.push(`连续失效：${invalidCount} 次${at ? `，最近 ${at}` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+function readJwtExpiresAt(token?: string | null) {
+  if (!token) {
+    return null;
+  }
+  const parts = token.split(".");
+  if (parts.length < 2) {
+    return null;
+  }
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const payload = JSON.parse(atob(padded)) as { exp?: unknown };
+    const exp = Number(payload.exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatTokenExpiry(token?: string | null) {
+  const expiresAt = readJwtExpiresAt(token);
+  if (!expiresAt) {
+    return { absolute: "—", relative: "", tone: "text-stone-400" };
+  }
+
+  const date = new Date(expiresAt);
+  const diffMs = expiresAt - Date.now();
+  const totalMinutes = Math.ceil(Math.abs(diffMs) / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  const relative =
+    diffMs <= 0
+      ? "已过期"
+      : days > 0
+        ? `剩余 ${days}d ${hours}h`
+        : hours > 0
+          ? `剩余 ${hours}h ${minutes}m`
+          : `剩余 ${minutes}m`;
+  const tone =
+    diffMs <= 0
+      ? "text-rose-500"
+      : diffMs < 24 * 60 * 60 * 1000
+        ? "text-amber-600"
+        : "text-stone-500";
+
+  const pad = (num: number) => String(num).padStart(2, "0");
+  const absolute = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+  return { absolute, relative, tone };
+}
+
 function maskToken(token?: string) {
   if (!token) return "—";
   if (token.length <= 18) return token;
@@ -1052,6 +1137,7 @@ function AccountsPageContent() {
                     <th className="w-32 px-4 py-3">创建时间</th>
                     <th className="w-24 px-4 py-3">额度</th>
                     <th className="w-40 px-4 py-3">恢复时间</th>
+                    <th className="w-40 px-4 py-3">Token 过期</th>
                     <th className="w-18 px-4 py-3">在途</th>
                     <th className="w-18 px-4 py-3">成功</th>
                     <th className="w-18 px-4 py-3">失败</th>
@@ -1110,7 +1196,15 @@ function AccountsPageContent() {
                         <td className="px-4 py-3">
                           <Badge
                             variant={status.badge}
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1"
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-md px-2 py-1",
+                              account.status === "异常" && "cursor-help",
+                            )}
+                            title={
+                              account.status === "异常"
+                                ? accountStatusTitle(account) || "暂无异常原因"
+                                : undefined
+                            }
                           >
                             <StatusIcon className="size-3.5" />
                             {account.status}
@@ -1142,6 +1236,20 @@ function AccountsPageContent() {
                               <div className="space-y-0.5">
                                 {restore.relative ? <div className="font-medium text-stone-700">{restore.relative}</div> : null}
                                 <div>{restore.absolute}</div>
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-4 py-3 text-xs leading-5 text-stone-500">
+                          {(() => {
+                            const expiry = formatTokenExpiry(account.access_token);
+                            if (expiry.absolute === "—") {
+                              return <span className="text-stone-400">—</span>;
+                            }
+                            return (
+                              <div className="space-y-0.5">
+                                <div className={expiry.tone}>{expiry.relative}</div>
+                                <div>{expiry.absolute}</div>
                               </div>
                             );
                           })()}

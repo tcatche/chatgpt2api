@@ -2,8 +2,6 @@
 
 import { useEffect } from "react";
 
-import { debugLog, isDebugLogEnabled } from "@/lib/debug-log";
-
 declare global {
   interface Window {
     __erudaInitialized?: boolean;
@@ -12,7 +10,10 @@ declare global {
 
 export function DebugConsole() {
   useEffect(() => {
-    if (!isDebugLogEnabled() || window.__erudaInitialized) {
+    if (typeof window === "undefined" || window.__erudaInitialized) {
+      return;
+    }
+    if (!new URLSearchParams(window.location.search).has("debug")) {
       return;
     }
     window.__erudaInitialized = true;
@@ -26,12 +27,6 @@ export function DebugConsole() {
             displaySize: 50,
             transparency: 0.92,
           },
-        });
-        debugLog("info", "Eruda 调试面板已启用", {
-          version: eruda.version,
-          ua: navigator.userAgent,
-          viewport: `${window.innerWidth}x${window.innerHeight}`,
-          dpr: window.devicePixelRatio,
         });
       })
       .catch((error) => {

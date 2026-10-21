@@ -2,6 +2,9 @@
 
 ## Unreleased
 
++ [清理] 移除参考图选图链路上的临时调试日志；`?debug=1` 的 Eruda 调试面板作为长期诊断入口保留。
++ [说明] 移动端选图后不显示预览确认为旧版 Edge for Android 选择器缺陷，升级 Edge 后恢复正常。
+
 ## 1.9.15 - 2026-10-21
 
 + [诊断] `?debug=1` 入口改为按需加载 Eruda 移动端调试面板，支持 Console / Network / Elements / Sources / Resources 等工具；移除自建日志面板，仅在带参数时加载，正常使用不受影响。

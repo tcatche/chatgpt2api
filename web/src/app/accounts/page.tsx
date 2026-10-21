@@ -220,8 +220,8 @@ function formatTokenExpiry(token?: string | null) {
 
 function maskToken(token?: string) {
   if (!token) return "—";
-  if (token.length <= 18) return token;
-  return `${token.slice(0, 16)}...${token.slice(-8)}`;
+  if (token.length <= 12) return token;
+  return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
 function downloadTokens(accounts: Account[]) {

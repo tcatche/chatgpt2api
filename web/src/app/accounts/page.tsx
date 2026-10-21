@@ -74,14 +74,13 @@ const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = 
 const statusMeta: Record<
   AccountStatus,
   {
-    icon: typeof CheckCircle2;
     badge: ComponentProps<typeof Badge>["variant"];
   }
 > = {
-  正常: { icon: CheckCircle2, badge: "success" },
-  限流: { icon: CircleAlert, badge: "warning" },
-  异常: { icon: CircleOff, badge: "danger" },
-  禁用: { icon: Ban, badge: "secondary" },
+  正常: { badge: "success" },
+  限流: { badge: "warning" },
+  异常: { badge: "danger" },
+  禁用: { badge: "secondary" },
 };
 
 const metricCards = [
@@ -1147,7 +1146,6 @@ function AccountsPageContent() {
                 <tbody>
                   {currentRows.map((account) => {
                     const status = statusMeta[account.status];
-                    const StatusIcon = status.icon;
 
                     return (
                       <tr
@@ -1168,7 +1166,7 @@ function AccountsPageContent() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium tracking-tight text-stone-700">
+                            <span className="text-xs leading-5 text-stone-600">
                               {maskToken(account.access_token)}
                             </span>
                             <button
@@ -1206,7 +1204,6 @@ function AccountsPageContent() {
                                 : undefined
                             }
                           >
-                            <StatusIcon className="size-3.5" />
                             {account.status}
                           </Badge>
                         </td>

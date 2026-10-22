@@ -613,11 +613,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     | { type: "all" }
     | null
   >(null);
-  const [timeoutRetry, setTimeoutRetry] = useState<{
-    conversationId: string;
-    taskId: string;
-    taskError: string;
-  } | null>(null);
 
   const parsedCount = useMemo(() => Number(clampImageCount(imageCount)), [imageCount]);
   const selectedConversation = activeConversation;
@@ -1490,7 +1485,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       };
     });
 
-  /* eslint-disable react-hooks/preserve-manual-memoization */
   const runConversationQueue = useCallback(
     async (conversationId: string) => {
       if (activeConversationQueueIds.has(conversationId)) {
@@ -1498,29 +1492,38 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       }
 
       const snapshot = hydratedConversationsRef.current.get(conversationId) ?? null;
-      const activeTurn = snapshot?.turns.find(
+      const pendingTurns = (snapshot?.turns ?? []).filter(
         (turn) =>
           (turn.status === "queued" || turn.status === "generating") &&
           turn.images.some((image) => image.status === "loading"),
       );
-      if (!snapshot || !activeTurn) {
+      if (!snapshot || pendingTurns.length === 0) {
         return;
       }
 
       activeConversationQueueIds.add(conversationId);
+      const pendingTurnIdSet = new Set(pendingTurns.map((turn) => turn.id));
       const applyTasks = async (tasks: ImageTask[]) => {
         const taskMap = new Map(tasks.map((task) => [task.id, task]));
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
           const turns = conversation.turns.map((turn) => {
-            if (turn.id !== activeTurn.id) {
+            if (!pendingTurnIdSet.has(turn.id)) {
               return turn;
             }
+            let turnChanged = false;
             const images = turn.images.map((image) => {
               const taskId = image.taskId || image.id;
               const task = taskMap.get(taskId);
-              return task ? taskDataToStoredImage({ ...image, taskId }, task) : image;
+              if (!task) {
+                return image;
+              }
+              turnChanged = true;
+              return taskDataToStoredImage({ ...image, taskId }, task);
             });
+            if (!turnChanged) {
+              return turn;
+            }
             const derived = deriveTurnStatus({ ...turn, images });
             return {
               ...turn,
@@ -1536,42 +1539,129 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
       };
 
-      try {
-
+      const buildTurnFiles = async (turn: ImageTurn) => {
+        if (turn.mode !== "edit") {
+          return { referenceFiles: [] as File[], maskFiles: [] as File[] };
+        }
         const referenceFiles = await Promise.all(
-          activeTurn.referenceImages.map((image, index) =>
-            referenceImageToFile(image, image.name || `${activeTurn.id}-${index + 1}.png`),
+          turn.referenceImages.map((image, index) =>
+            referenceImageToFile(image, image.name || `${turn.id}-${index + 1}.png`),
           ),
         );
-        const activeMaskFiles = await Promise.all(
-          activeTurn.maskImages.map((image, index) =>
-            referenceImageToFile(image, image.name || `${activeTurn.id}-mask-${index + 1}.png`),
+        const maskFiles = await Promise.all(
+          turn.maskImages.map((image, index) =>
+            referenceImageToFile(image, image.name || `${turn.id}-mask-${index + 1}.png`),
           ),
         );
-        if (activeTurn.mode === "edit" && referenceFiles.length === 0) {
+        if (referenceFiles.length === 0) {
           throw new Error("未找到可用于继续编辑的参考图");
         }
+        return { referenceFiles, maskFiles };
+      };
 
-        const pendingImages = activeTurn.images.filter((image) => image.status === "loading");
-        const submitted = await Promise.all(
-          pendingImages.map((image) => {
-            const taskId = image.taskId || image.id;
-            return activeTurn.mode === "edit"
-              ? createImageEditTask(taskId, referenceFiles, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality, activeMaskFiles)
-              : createImageGenerationTask(taskId, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality);
-          }),
+      const submitTurnImages = async (turn: ImageTurn, submitImageIds?: string[]) => {
+        const { referenceFiles, maskFiles } = await buildTurnFiles(turn);
+        const pendingImages = turn.images.filter(
+          (image) =>
+            image.status === "loading" &&
+            (!submitImageIds || submitImageIds.includes(image.taskId || image.id)),
         );
-        await applyTasks(submitted);
+        const submitted: ImageTask[] = [];
+        for (const image of pendingImages) {
+          const taskId = image.taskId || image.id;
+          try {
+            const task = turn.mode === "edit"
+              ? await createImageEditTask(taskId, referenceFiles, turn.prompt, turn.model, turn.size, turn.quality, maskFiles)
+              : await createImageGenerationTask(taskId, turn.prompt, turn.model, turn.size, turn.quality);
+            submitted.push(task);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "任务提交失败";
+            await updateConversation(conversationId, (current) => {
+              const conversation = current ?? snapshot;
+              const turns = conversation.turns.map((item) => {
+                if (item.id !== turn.id) {
+                  return item;
+                }
+                const images = item.images.map((itemImage) =>
+                  (itemImage.taskId || itemImage.id) === taskId
+                    ? { ...itemImage, status: "error" as const, error: message }
+                    : itemImage,
+                );
+                const derived = deriveTurnStatus({ ...item, images });
+                return {
+                  ...item,
+                  ...derived,
+                  images,
+                };
+              });
+              return {
+                ...conversation,
+                updatedAt: new Date().toISOString(),
+                turns,
+              };
+            });
+            toast.error(`任务提交失败：${message}`);
+          }
+        }
+        if (submitted.length > 0) {
+          await applyTasks(submitted);
+        }
+      };
+
+      const markTurnImagesFailed = async (turnId: string, message: string) => {
+        await updateConversation(conversationId, (current) => {
+          const conversation = current ?? snapshot;
+          const turns = conversation.turns.map((item) => {
+            if (item.id !== turnId) {
+              return item;
+            }
+            const images = item.images.map((image) =>
+              image.status === "loading" ? { ...image, status: "error" as const, error: message } : image,
+            );
+            const derived = deriveTurnStatus({ ...item, images });
+            return {
+              ...item,
+              ...derived,
+              images,
+            };
+          });
+          return {
+            ...conversation,
+            updatedAt: new Date().toISOString(),
+            turns,
+          };
+        });
+      };
+
+      try {
+        for (const turn of pendingTurns) {
+          const latestConversation = hydratedConversationsRef.current.get(conversationId) ?? null;
+          const latestTurn = latestConversation?.turns.find((item) => item.id === turn.id);
+          if (!latestTurn || !latestTurn.images.some((image) => image.status === "loading")) {
+            continue;
+          }
+          try {
+            await submitTurnImages(latestTurn);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "生成图片失败";
+            await markTurnImagesFailed(turn.id, message);
+            toast.error(message);
+          }
+        }
 
         let consecutiveErrors = 0;
-        const retryingTaskIdsRef = new Set<string>();
         while (true) {
           const latestConversation = hydratedConversationsRef.current.get(conversationId) ?? null;
-          const latestTurn = latestConversation?.turns.find((turn) => turn.id === activeTurn.id);
-          const loadingTaskIds =
-            latestTurn?.images.flatMap((image) =>
-              image.status === "loading" && image.taskId ? [image.taskId] : [],
-            ) || [];
+          const latestTurns = (latestConversation?.turns ?? []).filter((turn) => pendingTurnIdSet.has(turn.id));
+          const loadingTaskIds = Array.from(
+            new Set(
+              latestTurns.flatMap((turn) =>
+                turn.images.flatMap((image) =>
+                  image.status === "loading" && image.taskId ? [image.taskId] : [],
+                ),
+              ),
+            ),
+          );
           if (loadingTaskIds.length === 0) {
             break;
           }
@@ -1581,40 +1671,51 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             const taskList = await fetchImageTasks(loadingTaskIds);
             consecutiveErrors = 0;
             if (taskList.items.length > 0) {
-              // 检测是否有超时错误且需要显示重试按钮
-              const timeoutTask = taskList.items.find(
-                (task) =>
-                  task.status === "error" &&
-                  task.error?.includes("超时") &&
-                  task.conversation_id &&
-                  !retryingTaskIdsRef.has(task.id),
-              );
-              if (timeoutTask && timeoutTask.conversation_id) {
-                retryingTaskIdsRef.add(timeoutTask.id);
-                setTimeoutRetry({
-                  conversationId: timeoutTask.conversation_id,
-                  taskId: timeoutTask.id,
-                  taskError: timeoutTask.error || "生图超时",
-                });
-                // 应用超时错误到对应图片，显示继续等待按钮
-                await applyTasks([timeoutTask]);
-              } else {
-                await applyTasks(taskList.items);
-              }
+              await applyTasks(taskList.items);
             }
-            if (taskList.missing_ids.length > 0 && latestTurn) {
-              const missingImages = latestTurn.images.filter(
-                (image) => image.status === "loading" && image.taskId && taskList.missing_ids.includes(image.taskId),
-              );
-              const resubmitted = await Promise.all(
-                missingImages.map((image) =>
-                  activeTurn.mode === "edit"
-                    ? createImageEditTask(image.taskId || image.id, referenceFiles, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality, activeMaskFiles)
-                    : createImageGenerationTask(image.taskId || image.id, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality),
-                ),
-              );
-              if (resubmitted.length > 0) {
-                await applyTasks(resubmitted);
+            if (taskList.missing_ids.length > 0) {
+              for (const turn of latestTurns) {
+                const missingImageIds = turn.images
+                  .filter(
+                    (image) =>
+                      image.status === "loading" &&
+                      image.taskId &&
+                      taskList.missing_ids.includes(image.taskId),
+                  )
+                  .map((image) => image.taskId || image.id);
+                if (missingImageIds.length === 0) {
+                  continue;
+                }
+                try {
+                  await submitTurnImages(turn, missingImageIds);
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "生成图片失败";
+                  await updateConversation(conversationId, (current) => {
+                    const conversation = current ?? snapshot;
+                    const turns = conversation.turns.map((item) => {
+                      if (item.id !== turn.id) {
+                        return item;
+                      }
+                      const images = item.images.map((itemImage) =>
+                        missingImageIds.includes(itemImage.taskId || itemImage.id)
+                          ? { ...itemImage, status: "error" as const, error: message }
+                          : itemImage,
+                      );
+                      const derived = deriveTurnStatus({ ...item, images });
+                      return {
+                        ...item,
+                        ...derived,
+                        images,
+                      };
+                    });
+                    return {
+                      ...conversation,
+                      updatedAt: new Date().toISOString(),
+                      turns,
+                    };
+                  });
+                  toast.error(message);
+                }
               }
             }
           } catch (pollError) {
@@ -1633,18 +1734,16 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           return {
             ...conversation,
             updatedAt: new Date().toISOString(),
-            turns: conversation.turns.map((turn) =>
-              turn.id === activeTurn.id
-                ? {
-                    ...turn,
-                    status: "error",
-                    error: message,
-                    images: turn.images.map((image) =>
-                      image.status === "loading" ? { ...image, status: "error", error: message } : image,
-                    ),
-                  }
-                : turn,
-            ),
+            turns: conversation.turns.map((turn) => {
+              if (!pendingTurnIdSet.has(turn.id)) {
+                return turn;
+              }
+              const images = turn.images.map((image) =>
+                image.status === "loading" ? { ...image, status: "error" as const, error: message } : image,
+              );
+              const derived = deriveTurnStatus({ ...turn, images });
+              return { ...turn, ...derived, images };
+            }),
           };
         });
         toast.error(message);
@@ -1666,7 +1765,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     },
     [loadQuota, updateConversation],
   );
-  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   const handleRegenerateTurn = useCallback(
     async (conversationId: string, turnId: string) => {
@@ -1758,72 +1856,52 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [runConversationQueue],
   );
 
-  const handleTimeoutRetryContinue = useCallback(async () => {
-    if (!timeoutRetry) return;
-    const { conversationId, taskId } = timeoutRetry;
-    try {
-      await resumeImagePoll(taskId, imageTimeoutRetrySecs);
-      // 将对应图片的状态重置为 loading，并清除错误
-      void updateConversation(conversationId, (current) => {
-        const conversation = current ?? hydratedConversationsRef.current.get(conversationId) ?? null;
-        if (!conversation) return current!;
-        return {
-          ...conversation,
-          updatedAt: new Date().toISOString(),
-          turns: conversation.turns.map((turn) => {
-            const hasLoading = turn.images.some((image) => image.taskId === taskId);
-            if (!hasLoading) return turn;
-            return {
-              ...turn,
-              status: "generating" as const,
-              error: undefined,
-              images: turn.images.map((image) =>
+  const handleTimeoutRetryContinue = useCallback(
+    async (taskId: string) => {
+      let holder: { conversationId: string } | null = null;
+      for (const [id, conversation] of hydratedConversationsRef.current) {
+        if (conversation.turns.some((turn) => turn.images.some((image) => image.taskId === taskId))) {
+          holder = { conversationId: id };
+          break;
+        }
+      }
+      if (!holder) {
+        toast.error("未找到对应的生成任务");
+        return;
+      }
+      const { conversationId } = holder;
+      try {
+        await resumeImagePoll(taskId, imageTimeoutRetrySecs);
+        await updateConversation(conversationId, (current) => {
+          const conversation = current ?? hydratedConversationsRef.current.get(conversationId) ?? null;
+          if (!conversation) return current!;
+          return {
+            ...conversation,
+            updatedAt: new Date().toISOString(),
+            turns: conversation.turns.map((turn) => {
+              if (!turn.images.some((image) => image.taskId === taskId)) {
+                return turn;
+              }
+              const images = turn.images.map((image) =>
                 image.taskId === taskId
                   ? { ...image, status: "loading" as const, error: undefined, taskStatus: "running" as const, startTime: image.startTime || Date.now() }
-                  : image
-              ),
-            };
-          }),
-        };
-      });
-      // 清除重试状态
-      setTimeoutRetry(null);
-      toast.info(`已继续等待 ${imageTimeoutRetrySecs} 秒`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "续轮询失败";
-      toast.error(msg);
-      setTimeoutRetry(null);
-    }
-  }, [timeoutRetry, updateConversation, imageTimeoutRetrySecs]);
-
-  const handleTimeoutRetryCancel = useCallback(() => {
-    if (!timeoutRetry) return;
-    const { conversationId: convId, taskId, taskError } = timeoutRetry;
-    // 将超时错误应用到对应图片
-    void updateConversation(convId, (current) => {
-      const conversation = current ?? hydratedConversationsRef.current.get(convId) ?? null;
-      if (!conversation) return current!;
-      return {
-        ...conversation,
-        updatedAt: new Date().toISOString(),
-        turns: conversation.turns.map((turn) => {
-          const hasLoading = turn.images.some((image) => image.status === "loading" && image.taskId === taskId);
-          if (!hasLoading) return turn;
-          const images = turn.images.map((image) =>
-            image.taskId === taskId ? { ...image, status: "error" as const, error: taskError } : image,
-          );
-          const derived = deriveTurnStatus({ ...turn, images });
-          return {
-            ...turn,
-            ...derived,
-            images,
+                  : image,
+              );
+              const derived = deriveTurnStatus({ ...turn, images });
+              return { ...turn, ...derived, images };
+            }),
           };
-        }),
-      };
-    });
-    setTimeoutRetry(null);
-    toast.error(taskError);
-  }, [timeoutRetry, updateConversation]);
+        });
+        // 续等后把该任务重新纳入全局轮询
+        void runConversationQueue(conversationId);
+        toast.info(`已继续等待 ${imageTimeoutRetrySecs} 秒`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "续轮询失败";
+        toast.error(msg);
+      }
+    },
+    [runConversationQueue, imageTimeoutRetrySecs, updateConversation],
+  );
 
   const handleDismissErrors = useCallback(
     async (conversationId: string, turnId: string) => {

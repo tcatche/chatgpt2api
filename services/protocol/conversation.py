@@ -1374,16 +1374,18 @@ def _generate_single_image(
     poll_timeout_retry_count = 0
     concurrency_retry_count = 0
     account_email = ""
-    request_deadline = time.monotonic() + float(config.image_poll_timeout_secs)
+    # 拿到账号槽位后才起表，排队等待时间不计入轮询超时
+    request_deadline: float | None = None
 
     while True:
-        remaining_before_attempt = request_deadline - time.monotonic()
-        if remaining_before_attempt <= 0:
-            raise ImagePollTimeoutError(
-                f"ChatGPT 生图超时（已等待 {config.image_poll_timeout_secs} 秒）。"
-                f"当前超时阈值可在 config.json 中调大 image_poll_timeout_secs，"
-                f"也可能是账号被限流或生图队列拥堵导致。"
-            )
+        if request_deadline is not None:
+            remaining_before_attempt = request_deadline - time.monotonic()
+            if remaining_before_attempt <= 0:
+                raise ImagePollTimeoutError(
+                    f"ChatGPT 生图超时（已等待 {config.image_poll_timeout_secs} 秒）。"
+                    f"当前超时阈值可在 config.json 中调大 image_poll_timeout_secs，"
+                    f"也可能是账号被限流或生图队列拥堵导致。"
+                )
         try:
             if request.progress_callback:
                 request.progress_callback("getting_account")
@@ -1396,6 +1398,9 @@ def _generate_single_image(
             )
         except RuntimeError as exc:
             raise ImageGenerationError(str(exc) or "image generation failed", account_email=account_email) from exc
+
+        if request_deadline is None:
+            request_deadline = time.monotonic() + float(config.image_poll_timeout_secs)
 
         emitted_for_token = False
         returned_message = False

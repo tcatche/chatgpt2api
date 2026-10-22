@@ -4,8 +4,14 @@ import base64
 import unittest
 from unittest import mock
 
+from services.config import config
 from services.openai_backend_api import ChatRequirements, OpenAIBackendAPI
-from services.protocol.conversation import ConversationRequest, stream_text_deltas
+from services.protocol.conversation import (
+    ConversationRequest,
+    ImageOutput,
+    _generate_single_image,
+    stream_text_deltas,
+)
 
 
 PNG_BYTES = base64.b64decode(
@@ -233,6 +239,70 @@ class RequestDeadlineTests(unittest.TestCase):
 
         self.assertEqual(download_url, "https://download.test/deck.pptx")
         self.assertEqual(backend.session.get.call_args.kwargs["timeout"], 5.0)
+
+
+class ImagePollDeadlineTests(unittest.TestCase):
+    def test_account_slot_wait_is_not_counted_in_image_poll_deadline(self) -> None:
+        clock = {"now": 100.0}
+        captured: dict[str, float] = {}
+
+        def fake_monotonic() -> float:
+            return clock["now"]
+
+        def wait_for_account_slot(**_kwargs) -> str:
+            # 模拟排队等账号槽位：等待时间超过轮询超时阈值
+            clock["now"] += 15.0
+            return "token-1"
+
+        class FakeBackend:
+            def __init__(self, access_token: str = "") -> None:
+                self.access_token = access_token
+
+            @property
+            def image_request_deadline(self) -> float | None:
+                return captured.get("deadline")
+
+            @image_request_deadline.setter
+            def image_request_deadline(self, value: float) -> None:
+                captured["deadline"] = value
+
+            def close(self) -> None:
+                captured["closed"] = 1.0
+
+        def fake_stream(backend: FakeBackend, request: ConversationRequest, index: int, total: int):
+            captured["remaining"] = float(backend.image_request_deadline) - clock["now"]
+            yield ImageOutput(
+                kind="result",
+                model=request.model,
+                index=index,
+                total=total,
+                data=[{"b64_json": "eA=="}],
+            )
+
+        request = ConversationRequest(prompt="a cat", model="gpt-image-2")
+
+        with (
+            mock.patch.dict(config.data, {"image_poll_timeout_secs": 10}),
+            mock.patch("services.protocol.conversation.time.monotonic", side_effect=fake_monotonic),
+            mock.patch(
+                "services.protocol.conversation.account_service.get_available_access_token",
+                side_effect=wait_for_account_slot,
+            ),
+            mock.patch("services.protocol.conversation.account_service.get_account", return_value={}),
+            mock.patch("services.protocol.conversation.account_service.mark_image_result"),
+            mock.patch("services.protocol.conversation.split_image_model", return_value=("", None)),
+            mock.patch("services.protocol.conversation.is_codex_image_model", return_value=False),
+            mock.patch("services.protocol.conversation.OpenAIBackendAPI", FakeBackend),
+            mock.patch("services.protocol.conversation.stream_image_outputs", side_effect=fake_stream),
+            mock.patch("services.protocol.conversation._remove_image_conversation_later"),
+        ):
+            outputs = _generate_single_image(request, 0, 1)
+
+        self.assertEqual(len(outputs), 1)
+        # 排队到 115 秒才拿到账号，轮询窗口应从 115 秒起算 10 秒；
+        # 旧实现会从 100 秒起算，此时 deadline 已是 110 秒（过期）。
+        self.assertEqual(captured["deadline"], 125.0)
+        self.assertAlmostEqual(captured["remaining"], 10.0)
 
 
 if __name__ == "__main__":

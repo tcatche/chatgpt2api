@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Copy, Download, ImageIcon, LoaderCircle, Maximize2, Plus, RefreshCw, Search, Tag, Trash2, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Copy, Download, ImageIcon, LoaderCircle, Maximize2, MessagesSquare, Plus, RefreshCw, Search, Tag, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConversationFilter, UNLINKED_CONVERSATION_ID, conversationDisplayLabel } from "@/app/image-manager/components/conversation-filter";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { compressAllImages, deleteImageTag, deleteManagedImages, deleteToTarget, downloadImages, downloadSingleImage, fetchImageStorage, fetchImageTags, fetchManagedImages, setImageTags, type ImageStorageStats, type ManagedImage } from "@/lib/api";
+import { compressAllImages, deleteImageTag, deleteManagedImages, deleteToTarget, downloadImages, downloadSingleImage, fetchImageStorage, fetchImageTags, fetchManagedImages, setImageTags, type ImageStorageStats, type ManagedImage, type ManagedImageConversation } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 
 const LONG_PRESS_MS = 800;
@@ -85,12 +86,17 @@ function ImageManagerContent() {
 
   useEffect(() => { void loadStorage(); }, [loadStorage]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [conversations, setConversations] = useState<ManagedImageConversation[]>([]);
+  const [unlinkedCount, setUnlinkedCount] = useState(0);
+  const [unlinkedTotal, setUnlinkedTotal] = useState(0);
   const [tagEditTarget, setTagEditTarget] = useState<ManagedImage | null>(null);
   const [tagInput, setTagInput] = useState("");
   const [dialogVisible, setDialogVisible] = useState(false);
   const deleteTargetRef = useRef<ManagedImage | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
-  const [deleteMode, setDeleteMode] = useState<"selected" | "filtered" | "byDate" | null>(null);
+  const [deleteMode, setDeleteMode] = useState<"selected" | "filtered" | "byDate" | "byConversation" | null>(null);
+  const [deleteConversationId, setDeleteConversationId] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
 
   const filteredItems = selectedTags.length > 0
@@ -109,6 +115,9 @@ function ImageManagerContent() {
   const currentRows = filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
   const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
   const selectedCount = deleteMode === "filtered" ? items.length : deleteMode === "byDate" ? 0 : selectedPaths.length;
+  const deleteTargetConversationTotal = deleteConversationId === UNLINKED_CONVERSATION_ID
+    ? unlinkedTotal
+    : conversations.find((item) => item.id === deleteConversationId)?.image_total ?? 0;
   const currentPageSelected = currentRows.length > 0 && currentRows.every((item) => selectedSet.has(imageKey(item)));
   const allSelected = filteredItems.length > 0 && filteredItems.every((item) => selectedSet.has(imageKey(item)));
 
@@ -116,11 +125,14 @@ function ImageManagerContent() {
     setIsLoading(true);
     try {
       const [data, tagsData] = await Promise.all([
-        fetchManagedImages({ start_date: startDate, end_date: endDate }),
+        fetchManagedImages({ start_date: startDate, end_date: endDate, conversation_id: selectedConversationId }),
         fetchImageTags(),
       ]);
       setItems(data.items);
       setAllTags(tagsData.tags);
+      setConversations(data.conversations ?? []);
+      setUnlinkedCount(data.unlinked_count ?? 0);
+      setUnlinkedTotal(data.unlinked_total ?? 0);
       setSelectedPaths((current) => current.filter((path) => data.items.some((item) => imageKey(item) === path)));
       setPage(1);
     } catch (error) {
@@ -228,6 +240,7 @@ function ImageManagerContent() {
     setStartDate("");
     setEndDate("");
     setSelectedTags([]);
+    setSelectedConversationId("");
   };
 
   const togglePaths = (paths: string[], checked: boolean) => {
@@ -235,14 +248,32 @@ function ImageManagerContent() {
   };
 
   const confirmDelete = async () => {
-    if (!deleteMode || selectedCount === 0) return;
+    if (!deleteMode) return;
+    if (deleteMode === "byConversation") {
+      if (!deleteConversationId) return;
+    } else if (selectedCount === 0) {
+      return;
+    }
     setIsDeleting(true);
     try {
-      const data = await deleteManagedImages(deleteMode === "filtered" ? { start_date: startDate, end_date: endDate, all_matching: true } : { paths: selectedPaths });
+      const data = deleteMode === "filtered"
+        ? await deleteManagedImages({ start_date: startDate, end_date: endDate, all_matching: true })
+        : deleteMode === "byConversation"
+          ? await deleteManagedImages({ conversation_id: deleteConversationId })
+          : await deleteManagedImages({ paths: selectedPaths });
       toast.success(`已删除 ${data.removed} 张图片`);
+      const resetConversationFilter =
+        deleteMode === "byConversation" && selectedConversationId === deleteConversationId;
       setDeleteMode(null);
+      setDeleteConversationId("");
       setSelectedPaths([]);
-      await loadImages();
+      if (resetConversationFilter) {
+        // 当前正按被删除的会话筛选，重置后由筛选 effect 触发刷新
+        setSelectedConversationId("");
+      } else {
+        await loadImages();
+      }
+      void loadStorage();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除图片失败");
     } finally {
@@ -270,7 +301,7 @@ function ImageManagerContent() {
 
   useEffect(() => {
     void loadImages();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, selectedConversationId]);
 
   return (
     <section className="space-y-5">
@@ -280,6 +311,12 @@ function ImageManagerContent() {
           <h1 className="text-2xl font-semibold tracking-tight">图片管理</h1>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ConversationFilter
+            conversations={conversations}
+            unlinkedCount={unlinkedCount}
+            value={selectedConversationId}
+            onChange={setSelectedConversationId}
+          />
           <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
           <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700">
             清除筛选条件
@@ -288,10 +325,7 @@ function ImageManagerContent() {
             {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Search className="size-4" />}
             查询
           </Button>
-          <Button variant="outline" onClick={() => setDeleteMode("filtered")} disabled={isDeleting || items.length === 0 || (!startDate && !endDate)} className="h-10 rounded-xl border-rose-200 bg-white px-4 text-rose-600 hover:bg-rose-50">
-            <Trash2 className="size-4" />
-            删除匹配日期
-          </Button>
+          {/* TODO: 待废弃 —— 「删除匹配日期」入口已隐藏，按日期删除改由下方快捷操作承担 */}
         </div>
       </div>
 
@@ -379,6 +413,10 @@ function ImageManagerContent() {
                 onClick={() => setDeleteMode("byDate")}>
                 🗑️ 按日期删除
               </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs border-rose-200 text-rose-600"
+                onClick={() => { setDeleteConversationId(""); setDeleteMode("byConversation"); }}>
+                🗑️ 按会话删除
+              </Button>
               <form onSubmit={async (e) => { e.preventDefault();
                 try {
                   const r = await deleteToTarget(targetFreeMb);
@@ -430,6 +468,42 @@ function ImageManagerContent() {
                 } catch { toast.error("删除失败"); }
                 finally { setIsDeleting(false); }
               }}>
+              {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete by conversation dialog */}
+      <Dialog open={deleteMode === "byConversation"} onOpenChange={() => setDeleteMode(null)}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader><DialogTitle>按会话删除图片</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-stone-600 shrink-0">会话</label>
+              <ConversationFilter
+                conversations={conversations}
+                unlinkedCount={unlinkedTotal}
+                value={deleteConversationId}
+                onChange={setDeleteConversationId}
+                includeAll={false}
+                countField="image_total"
+                placeholder="选择要删除的会话"
+                triggerClassName="flex-1"
+              />
+            </div>
+            <p className="text-xs text-stone-500">
+              {deleteConversationId
+                ? `将删除「${conversationDisplayLabel(conversations, deleteConversationId, "未关联")}」的全部 ${deleteTargetConversationTotal} 张图片（不受当前日期与筛选影响），包含缩略图与标签。`
+                : "选择会话或「未关联」后，将删除其全部图片。"}
+            </p>
+            <p className="text-xs text-rose-500">此操作不可撤销；对应会话的历史记录里这些图会显示为失效图片。</p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteMode(null)}>取消</Button>
+            <Button variant="destructive" disabled={!deleteConversationId || isDeleting}
+              onClick={() => void confirmDelete()}>
               {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : null}
               确认删除
             </Button>
@@ -513,6 +587,25 @@ function ImageManagerContent() {
                   </button>
                 </div>
                 <div className="mt-3 space-y-2 text-xs text-stone-500">
+                  {item.conversation_id ? (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-1 text-[11px] text-stone-500 transition hover:text-stone-900"
+                      title={`按会话筛选：${item.conversation_title || item.conversation_id}`}
+                      onClick={() => {
+                        setSelectedConversationId(item.conversation_id || "");
+                        setPage(1);
+                      }}
+                    >
+                      <MessagesSquare className="size-3 shrink-0" />
+                      <span className="truncate">{item.conversation_title || "未命名会话"}</span>
+                    </button>
+                  ) : (
+                    <span className="flex w-full items-center gap-1 text-[11px] text-stone-400">
+                      <MessagesSquare className="size-3 shrink-0" />
+                      未关联会话
+                    </span>
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1 font-medium text-stone-700">
                       <CalendarDays className="size-3.5" />

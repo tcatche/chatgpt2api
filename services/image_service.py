@@ -12,11 +12,13 @@ from fastapi.responses import FileResponse, Response
 from PIL import Image, ImageOps
 
 from services.config import config
+from services.image_conversation_service import image_conversation_service
 from services.image_storage_service import image_storage_service
 from services.image_tags_service import load_tags, remove_tags
 from utils.log import logger
 
 THUMBNAIL_SIZE = (320, 320)
+UNLINKED_CONVERSATION_ID = "__unlinked__"
 
 
 def _cleanup_empty_dirs(root: Path) -> None:
@@ -148,31 +150,130 @@ def cleanup_image_thumbnails() -> int:
     _cleanup_empty_dirs(thumbnails_root)
     return removed
 
-def list_images(base_url: str, start_date: str = "", end_date: str = "") -> dict[str, object]:
+def _conversation_image_index() -> dict[str, dict[str, str]]:
+    """文件名 → 所属会话；同一文件命中多个会话时取最近更新的那个。"""
+    index: dict[str, dict[str, str]] = {}
+    for ref in image_conversation_service.list_image_refs():
+        entry = {
+            "conversation_id": str(ref.get("conversation_id") or ""),
+            "conversation_title": str(ref.get("title") or ""),
+            "updated_at": str(ref.get("updated_at") or ""),
+        }
+        for filename in ref.get("filenames") or []:
+            name = str(filename)
+            current = index.get(name)
+            if current is None or entry["updated_at"] > current.get("updated_at", ""):
+                index[name] = entry
+    return index
+
+
+def _with_conversation(item: dict[str, object], index: dict[str, dict[str, str]]) -> dict[str, object]:
+    name = str(item.get("name") or Path(str(item.get("path") or "")).name)
+    entry = index.get(name)
+    if entry is None:
+        return {**item, "conversation_id": "", "conversation_title": ""}
+    return {
+        **item,
+        "conversation_id": entry["conversation_id"],
+        "conversation_title": entry["conversation_title"],
+    }
+
+
+def _matches_conversation(item: dict[str, object], conversation_id: str) -> bool:
+    if not conversation_id:
+        return True
+    item_conversation = str(item.get("conversation_id") or "")
+    if conversation_id == UNLINKED_CONVERSATION_ID:
+        return not item_conversation
+    return item_conversation == conversation_id
+
+
+def _conversation_summaries(
+    index: dict[str, dict[str, str]],
+    all_items: list[dict[str, object]],
+    date_items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """下拉选项：成员与筛选无关（只要有图就出现），计数按当前日期范围。"""
+    existing_names = {str(item.get("name") or "") for item in all_items}
+    summary: dict[str, dict[str, object]] = {}
+    for filename, entry in index.items():
+        if filename not in existing_names:
+            continue
+        conversation_id = entry["conversation_id"]
+        if not conversation_id or conversation_id in summary:
+            continue
+        summary[conversation_id] = {
+            "id": conversation_id,
+            "title": entry["conversation_title"],
+            "image_count": 0,
+            "image_total": 0,
+            "updated_at": entry["updated_at"],
+        }
+    for item in all_items:
+        conversation_id = str(item.get("conversation_id") or "")
+        if conversation_id in summary:
+            summary[conversation_id]["image_total"] = int(summary[conversation_id]["image_total"]) + 1
+    for item in date_items:
+        conversation_id = str(item.get("conversation_id") or "")
+        if conversation_id in summary:
+            summary[conversation_id]["image_count"] = int(summary[conversation_id]["image_count"]) + 1
+    return sorted(summary.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+
+
+def list_images(base_url: str, start_date: str = "", end_date: str = "", conversation_id: str = "") -> dict[str, object]:
     config.cleanup_old_images()
     cleanup_image_thumbnails()
     all_tags = load_tags()
-    items = [
-        {
-            **item,
-            "url": str(item.get("url") or f"{base_url.rstrip('/')}/images/{item['path']}"),
-            "thumbnail_url": thumbnail_url(base_url, str(item["path"])),
-            "tags": all_tags.get(str(item["path"]), []),
-        }
-        for item in image_storage_service.list_items(base_url, start_date, end_date)
+    index = _conversation_image_index()
+    all_items = [
+        _with_conversation(
+            {
+                **item,
+                "url": str(item.get("url") or f"{base_url.rstrip('/')}/images/{item['path']}"),
+                "thumbnail_url": thumbnail_url(base_url, str(item["path"])),
+                "tags": all_tags.get(str(item["path"]), []),
+            },
+            index,
+        )
+        for item in image_storage_service.list_items(base_url)
     ]
+    date_items = [
+        item
+        for item in all_items
+        if (not start_date or str(item.get("date") or "") >= start_date)
+        and (not end_date or str(item.get("date") or "") <= end_date)
+    ]
+    items = [item for item in date_items if _matches_conversation(item, conversation_id)]
+    unlinked_count = sum(1 for item in date_items if not item.get("conversation_id"))
+    unlinked_total = sum(1 for item in all_items if not item.get("conversation_id"))
     groups: dict[str, list[dict[str, object]]] = {}
     for item in items:
         groups.setdefault(str(item["date"]), []).append(item)
-    return {"items": items, "groups": [{"date": key, "items": value} for key, value in groups.items()]}
+    return {
+        "items": items,
+        "conversations": _conversation_summaries(index, all_items, date_items),
+        "unlinked_count": unlinked_count,
+        "unlinked_total": unlinked_total,
+        "groups": [{"date": key, "items": value} for key, value in groups.items()],
+    }
 
 
-def delete_images(paths: list[str] | None = None, start_date: str = "", end_date: str = "", all_matching: bool = False) -> dict[str, int]:
+def delete_images(paths: list[str] | None = None, start_date: str = "", end_date: str = "", all_matching: bool = False, conversation_id: str = "") -> dict[str, int]:
     root = config.images_dir.resolve()
-    targets = [
-        str(item["path"])
-        for item in image_storage_service.list_items("", start_date=start_date, end_date=end_date)
-    ] if all_matching else (paths or [])
+    if conversation_id:
+        index = _conversation_image_index()
+        targets = []
+        for item in image_storage_service.list_items(""):
+            enriched = _with_conversation(item, index)
+            if _matches_conversation(enriched, conversation_id):
+                targets.append(str(enriched["path"]))
+    elif all_matching:
+        targets = [
+            str(item["path"])
+            for item in image_storage_service.list_items("", start_date=start_date, end_date=end_date)
+        ]
+    else:
+        targets = paths or []
     removed = 0
     for item in targets:
         path = (root / item).resolve()

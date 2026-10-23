@@ -60,6 +60,18 @@ def _decode_data_url(value: str) -> tuple[bytes, str, str]:
     return data, extension, mime_type
 
 
+def image_filename_from_url(url: object) -> str:
+    """从结果图 URL 中取文件名，用于和图片管理里的图片做关联。"""
+    text = str(url or "").strip()
+    if not text or text.startswith("data:"):
+        return ""
+    text = text.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    if not text:
+        return ""
+    name = text.rsplit("/", 1)[-1]
+    return name if "." in name else ""
+
+
 class ImageConversationService:
     """按登录身份持久化图片会话（含多轮、参考图/蒙版与结果引用）。
 
@@ -83,6 +95,37 @@ class ImageConversationService:
             ]
         items.sort(key=lambda item: _timestamp(item.get("updatedAt")), reverse=True)
         return {"items": items}
+
+    def list_image_refs(self) -> list[dict[str, Any]]:
+        """列出所有会话的结果图引用，供图片管理按会话筛选/删除使用（与登录身份无关）。"""
+        with self._lock:
+            items = list(self._items.values())
+        refs: list[dict[str, Any]] = []
+        for item in items:
+            turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+            filenames: list[str] = []
+            for turn in turns:
+                if not isinstance(turn, dict):
+                    continue
+                images = turn.get("images")
+                if not isinstance(images, list):
+                    continue
+                for image in images:
+                    if not isinstance(image, dict):
+                        continue
+                    name = image_filename_from_url(image.get("url"))
+                    if name:
+                        filenames.append(name)
+            if not filenames:
+                continue
+            refs.append({
+                "conversation_id": _clean(item.get("id")),
+                "title": _clean(item.get("title")),
+                "owner_id": _clean(item.get("owner_id")),
+                "updated_at": _clean(item.get("updatedAt")),
+                "filenames": filenames,
+            })
+        return refs
 
     def get_conversation(self, identity: dict[str, object], conversation_id: str) -> dict[str, Any] | None:
         owner = _owner_id(identity)

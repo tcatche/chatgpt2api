@@ -28,6 +28,7 @@ export function ConfigCard() {
   const setImageRetentionDays = useSettingsStore((state) => state.setImageRetentionDays);
   const setImagePollTimeoutSecs = useSettingsStore((state) => state.setImagePollTimeoutSecs);
   const setImageAccountConcurrency = useSettingsStore((state) => state.setImageAccountConcurrency);
+  const setImageMaxConcurrency = useSettingsStore((state) => state.setImageMaxConcurrency);
   const setDefaultImageModel = useSettingsStore((state) => state.setDefaultImageModel);
   const setImageSettleEnabled = useSettingsStore((state) => state.setImageSettleEnabled);
   const setImageRemoveConversationAfterResult = useSettingsStore((state) => state.setImageRemoveConversationAfterResult);
@@ -233,6 +234,16 @@ export function ConfigCard() {
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
             <p className="text-xs text-stone-500">限制每个账号同时处理的图片请求数量，默认 3。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">全局图片并发</label>
+            <Input
+              value={String(config?.image_max_concurrency || "")}
+              onChange={(event) => setImageMaxConcurrency(event.target.value)}
+              placeholder="3"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">全部账号合计同时执行的生图任务上限，默认 3；设为 1 即串行，超出后按提交顺序排队。</p>
           </div>
           <div className="space-y-4 rounded-xl border border-stone-200 bg-white px-4 py-4 md:col-span-2">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">

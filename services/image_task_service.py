@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -111,6 +112,9 @@ class ImageTaskService:
         self.retention_days_getter = retention_days_getter or (lambda: config.image_retention_days)
         self._lock = threading.RLock()
         self._tasks: dict[str, dict[str, Any]] = {}
+        self._queue: queue.Queue[tuple[str, str, dict[str, Any], dict[str, object], str]] = queue.Queue()
+        self._worker_lock = threading.Lock()
+        self._workers: list[threading.Thread] = []
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             self._tasks = self._load_locked()
@@ -230,14 +234,68 @@ class ImageTaskService:
             should_start = True
 
         if should_start:
-            thread = threading.Thread(
-                target=self._run_task,
-                args=(key, mode, payload, dict(identity), _clean(payload.get("model"), config.default_image_model)),
-                name=f"image-task-{task_id[:16]}",
-                daemon=True,
+            self._enqueue(
+                key,
+                mode,
+                payload,
+                dict(identity),
+                _clean(payload.get("model"), config.default_image_model),
             )
-            thread.start()
         return _public_task(task)
+
+    def _enqueue(
+        self,
+        key: str,
+        mode: str,
+        payload: dict[str, Any],
+        identity: dict[str, object],
+        model: str,
+    ) -> None:
+        self._ensure_workers()
+        self._queue.put((key, mode, payload, identity, model))
+
+    def _ensure_workers(self) -> None:
+        limit = max(1, int(config.image_max_concurrency))
+        with self._worker_lock:
+            self._workers = [worker for worker in self._workers if worker.is_alive()]
+            while len(self._workers) < limit:
+                worker = threading.Thread(
+                    target=self._worker_loop,
+                    name="image-task-worker",
+                    daemon=True,
+                )
+                self._workers.append(worker)
+                worker.start()
+
+    def _worker_loop(self) -> None:
+        """按 FIFO 从队列取任务执行；并发上限调小时多余 worker 自行退出。"""
+        while True:
+            with self._worker_lock:
+                alive = [worker for worker in self._workers if worker.is_alive()]
+                limit = max(1, int(config.image_max_concurrency))
+                if len(alive) > limit and threading.current_thread() is alive[-1]:
+                    self._workers.remove(threading.current_thread())
+                    return
+            try:
+                job = self._queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                if job is not None:
+                    self._run_task(*job)
+            except Exception as exc:
+                # 防御：worker 内部异常不应让线程退出，任务标记为失败
+                try:
+                    self._update_task(
+                        job[0] if job else "",
+                        status=TASK_STATUS_ERROR,
+                        error=str(exc) or "image task failed",
+                        data=[],
+                    )
+                except Exception:
+                    pass
+            finally:
+                self._queue.task_done()
 
     def _run_task(
         self,

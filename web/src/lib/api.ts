@@ -177,6 +177,7 @@ export type SettingsConfig = {
   image_retention_days?: number | string;
   image_poll_timeout_secs?: number | string;
   image_account_concurrency?: number | string;
+  image_max_concurrency?: number | string;
   default_image_model?: string;
   custom_image_models?: string[];
   image_models?: string[];

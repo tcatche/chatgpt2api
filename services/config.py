@@ -471,6 +471,14 @@ class ConfigStore:
             return 3
 
     @property
+    def image_max_concurrency(self) -> int:
+        """全部账号合计同时执行的生图任务上限，超出后按提交顺序排队。"""
+        try:
+            return max(1, min(64, int(self.data.get("image_max_concurrency", 3))))
+        except (TypeError, ValueError):
+            return 3
+
+    @property
     def custom_image_models(self) -> list[str]:
         """兼容旧配置；新版本由自动拉取的 image_models_cache 管理模型列表。"""
         return _normalize_custom_image_models(self.data.get("custom_image_models"))
@@ -653,6 +661,7 @@ class ConfigStore:
         data["image_poll_initial_wait_secs"] = self.image_poll_initial_wait_secs
         data["image_timeout_retry_secs"] = self.image_timeout_retry_secs
         data["image_account_concurrency"] = self.image_account_concurrency
+        data["image_max_concurrency"] = self.image_max_concurrency
         data["custom_image_models"] = self.custom_image_models
         data["image_models"] = self.image_models
         data["image_models_source"] = self.image_models_source

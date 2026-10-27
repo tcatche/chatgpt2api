@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from services.config import config
 from services.image_task_service import ImageTaskService
 
 
@@ -143,6 +146,48 @@ class ImageTaskServiceTests(unittest.TestCase):
 
             self.assertEqual([item["status"] for item in result["items"]], ["error", "error"])
             self.assertTrue(all("已中断" in item.get("error", "") for item in result["items"]))
+
+
+    def test_global_concurrency_caps_workers_and_keeps_fifo_order(self):
+        started: list[str] = []
+        state = {"running": 0, "max_running": 0}
+        state_lock = threading.Lock()
+        gate = threading.Event()
+
+        def handler(payload):
+            with state_lock:
+                state["running"] += 1
+                state["max_running"] = max(state["max_running"], state["running"])
+                started.append(str(payload.get("prompt") or ""))
+            gate.wait(timeout=3.0)
+            with state_lock:
+                state["running"] -= 1
+            return {"data": [{"url": "http://example.test/image.png"}]}
+
+        with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(config.data, {"image_max_concurrency": 2}):
+            service = self.make_service(Path(tmp_dir) / "image_tasks.json", handler)
+            for index in range(4):
+                service.submit_generation(
+                    OWNER,
+                    client_task_id=f"task-{index}",
+                    prompt=f"p{index}",
+                    model="gpt-image-2",
+                    size=None,
+                    base_url="http://local.test",
+                )
+
+            deadline = time.time() + 2.0
+            while time.time() < deadline and len(started) < 2:
+                time.sleep(0.02)
+            self.assertEqual(started, ["p0", "p1"])
+            self.assertEqual(state["max_running"], 2)
+
+            gate.set()
+            for index in range(4):
+                wait_for_task(service, OWNER, f"task-{index}", "success", timeout=5.0)
+
+        self.assertEqual(started, ["p0", "p1", "p2", "p3"])
+        self.assertEqual(state["max_running"], 2)
 
 
 if __name__ == "__main__":

@@ -105,7 +105,10 @@ export async function resolveCachedImage(source: string): Promise<ResolvedCached
       // IndexedDB 不可用时继续走网络，并保留当前页面的内存缓存。
     }
 
-    const response = await fetch(normalized);
+    // 浏览器 HTTP 缓存可能存着 <img> 发起的 no-cors 响应（没有 ACAO），
+    // 后续 cors fetch 复用它会被 CORS 拦截；reload 强制绕过浏览器缓存重新取。
+    // 应用自己的 IndexedDB / 内存缓存仍然生效，不会造成重复下载。
+    const response = await fetch(normalized, { cache: "reload" });
     if (!response.ok) {
       throw new Error(`图片加载失败：HTTP ${response.status}`);
     }

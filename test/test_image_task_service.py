@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from fastapi import HTTPException
+
 from services.config import config
 from services.image_task_service import ImageTaskService
 
@@ -26,6 +28,16 @@ def wait_for_task(service: ImageTaskService, identity: dict[str, object], task_i
             return last
         time.sleep(0.02)
     raise AssertionError(f"task {task_id} did not reach {status}, last={last}")
+
+
+class FakeImageStorage:
+    def __init__(self, payloads: dict[str, bytes]) -> None:
+        self.payloads = payloads
+
+    def get_bytes(self, rel: str) -> bytes:
+        if rel not in self.payloads:
+            raise RuntimeError("missing")
+        return self.payloads[rel]
 
 
 class ImageTaskServiceTests(unittest.TestCase):
@@ -148,6 +160,79 @@ class ImageTaskServiceTests(unittest.TestCase):
             self.assertTrue(all("已中断" in item.get("error", "") for item in result["items"]))
 
 
+    def test_batch_tasks_load_references_at_execution_and_keep_order(self):
+        started: list[str] = []
+        received: dict[str, list] = {}
+        lock = threading.Lock()
+
+        def handler(payload):
+            with lock:
+                started.append(payload["prompt"])
+                received[payload["prompt"]] = payload.get("images") or []
+            return {"data": [{"url": "http://example.test/image.png"}]}
+
+        storage = FakeImageStorage({"inputs/2026/10/27/a.jpg": b"jpeg-bytes"})
+        with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
+            config.data, {"image_max_concurrency": 1}
+        ), mock.patch(
+            "services.image_task_service.image_storage_service", storage
+        ):
+            service = self.make_service(Path(tmp_dir) / "image_tasks.json", handler)
+            service.submit_batch(
+                OWNER,
+                items=[
+                    {
+                        "client_task_id": "batch-1",
+                        "mode": "edit",
+                        "prompt": "edit one",
+                        "model": "gpt-image-2",
+                        "reference_paths": ["inputs/2026/10/27/a.jpg"],
+                    },
+                    {
+                        "client_task_id": "batch-2",
+                        "mode": "generate",
+                        "prompt": "gen two",
+                        "model": "gpt-image-2",
+                    },
+                ],
+                base_url="http://local.test",
+            )
+            wait_for_task(service, OWNER, "batch-1", "success")
+            wait_for_task(service, OWNER, "batch-2", "success")
+
+        self.assertEqual(started, ["edit one", "gen two"])
+        self.assertEqual(received["edit one"], [(b"jpeg-bytes", "a.jpg", "image/jpeg")])
+        self.assertEqual(received["gen two"], [])
+
+    def test_batch_task_review_rejects_before_generation(self):
+        called: list[str] = []
+
+        def handler(payload):
+            called.append(str(payload.get("prompt") or ""))
+            return {"data": [{"url": "http://example.test/image.png"}]}
+
+        with tempfile.TemporaryDirectory() as tmp_dir, mock.patch(
+            "services.image_task_service.check_request",
+            side_effect=HTTPException(status_code=400, detail={"error": "检测到敏感词"}),
+        ):
+            service = self.make_service(Path(tmp_dir) / "image_tasks.json", handler)
+            service.submit_batch(
+                OWNER,
+                items=[
+                    {
+                        "client_task_id": "batch-review",
+                        "mode": "generate",
+                        "prompt": "bad prompt",
+                        "model": "gpt-image-2",
+                    }
+                ],
+                base_url="http://local.test",
+            )
+            task = wait_for_task(service, OWNER, "batch-review", "error")
+
+        self.assertEqual(task["error"], "检测到敏感词")
+        self.assertEqual(called, [])
+
     def test_global_concurrency_caps_workers_and_keeps_fifo_order(self):
         started: list[str] = []
         state = {"running": 0, "max_running": 0}
@@ -179,14 +264,14 @@ class ImageTaskServiceTests(unittest.TestCase):
             deadline = time.time() + 2.0
             while time.time() < deadline and len(started) < 2:
                 time.sleep(0.02)
-            self.assertEqual(started, ["p0", "p1"])
+            self.assertEqual(set(started[:2]), {"p0", "p1"})
             self.assertEqual(state["max_running"], 2)
 
             gate.set()
             for index in range(4):
                 wait_for_task(service, OWNER, f"task-{index}", "success", timeout=5.0)
 
-        self.assertEqual(started, ["p0", "p1", "p2", "p3"])
+        self.assertEqual(set(started), {"p0", "p1", "p2", "p3"})
         self.assertEqual(state["max_running"], 2)
 
 

@@ -19,6 +19,7 @@ class FakeImageTaskService:
     def __init__(self):
         self.generation_calls = []
         self.edit_calls = []
+        self.batch_calls = []
 
     def submit_generation(self, identity, **kwargs):
         self.generation_calls.append((identity, kwargs))
@@ -40,6 +41,19 @@ class FakeImageTaskService:
             "created_at": "2026-01-01 00:00:00",
             "updated_at": "2026-01-01 00:00:00",
         }
+
+    def submit_batch(self, identity, *, items, base_url=""):
+        self.batch_calls.append((identity, items, base_url))
+        return [
+            {
+                "id": item["client_task_id"],
+                "status": "queued",
+                "mode": item["mode"],
+                "created_at": "2026-01-01 00:00:00",
+                "updated_at": "2026-01-01 00:00:00",
+            }
+            for item in items
+        ]
 
     def list_tasks(self, _identity, ids):
         return {
@@ -162,6 +176,81 @@ class ImageTasksApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual([item["id"] for item in payload["items"]], ["task-1"])
         self.assertEqual(payload["missing_ids"], ["missing"])
+
+    def test_create_batch_tasks_parses_reference_urls(self):
+        response = self.client.post(
+            "/api/image-tasks/batch",
+            headers=AUTH_HEADERS,
+            json={
+                "tasks": [
+                    {
+                        "client_task_id": "batch-1",
+                        "mode": "edit",
+                        "prompt": "make it blue",
+                        "model": "gpt-image-2",
+                        "reference_urls": [
+                            "https://webdav-r2.vvooo.top/chatgpt2api/images/inputs/2026/10/27/a.jpg?token=1",
+                        ],
+                        "mask_urls": ["/images/inputs/2026/10/27/mask.png"],
+                    },
+                    {
+                        "client_task_id": "batch-2",
+                        "mode": "generate",
+                        "prompt": "a cat",
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([task["id"] for task in response.json()["tasks"]], ["batch-1", "batch-2"])
+        _, items, _ = self.fake_service.batch_calls[0]
+        self.assertEqual(items[0]["reference_paths"], ["inputs/2026/10/27/a.jpg"])
+        self.assertEqual(items[0]["mask_paths"], ["inputs/2026/10/27/mask.png"])
+        self.assertEqual(items[0]["mode"], "edit")
+        self.assertEqual(items[1]["mode"], "generate")
+
+    def test_create_batch_tasks_rejects_more_than_100(self):
+        response = self.client.post(
+            "/api/image-tasks/batch",
+            headers=AUTH_HEADERS,
+            json={
+                "tasks": [
+                    {"client_task_id": f"batch-{index}", "prompt": "cat"}
+                    for index in range(101)
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_storage_rel_from_url(self):
+        self.assertEqual(
+            image_tasks_module._storage_rel_from_url(
+                "https://webdav-r2.vvooo.top/chatgpt2api/images/inputs/2026/10/27/a.jpg?x=1#y"
+            ),
+            "inputs/2026/10/27/a.jpg",
+        )
+        self.assertEqual(
+            image_tasks_module._storage_rel_from_url("https://image2.vvooo.top/images/2026/10/27/b.png"),
+            "2026/10/27/b.png",
+        )
+        self.assertEqual(
+            image_tasks_module._storage_rel_from_url("/images/inputs/2026/10/27/c.webp"),
+            "inputs/2026/10/27/c.webp",
+        )
+        self.assertEqual(image_tasks_module._storage_rel_from_url("https://example.test/no-image.png"), "")
+
+    def test_storage_rel_from_url_uses_public_base_prefix(self):
+        with mock.patch.object(
+            image_tasks_module.config,
+            "get_image_storage_settings",
+            return_value={"public_base_url": "https://cdn.example.com"},
+        ):
+            self.assertEqual(
+                image_tasks_module._storage_rel_from_url("https://cdn.example.com/inputs/2026/10/27/a.jpg"),
+                "inputs/2026/10/27/a.jpg",
+            )
 
 
 if __name__ == "__main__":

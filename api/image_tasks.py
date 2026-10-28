@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
@@ -20,12 +22,52 @@ class ImageGenerationTaskRequest(BaseModel):
     quality: str = "auto"
 
 
+class ImageBatchTaskItem(BaseModel):
+    client_task_id: str = Field(..., min_length=1)
+    mode: str = "generate"
+    prompt: str = Field(..., min_length=1)
+    model: str | None = None
+    size: str | None = None
+    quality: str = "auto"
+    reference_urls: list[str] = Field(default_factory=list)
+    mask_urls: list[str] = Field(default_factory=list)
+
+
+class ImageBatchTaskRequest(BaseModel):
+    tasks: list[ImageBatchTaskItem] = Field(..., min_length=1, max_length=100)
+
+
 class ResumePollRequest(BaseModel):
     extra_timeout_secs: float = Field(default=30.0, ge=5.0, le=120.0)
 
 
 def _parse_task_ids(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _storage_rel_from_url(value: str) -> str:
+    """把参考图 URL 还原成图片存储里的相对路径（兼容 WebDAV 公网地址与同源地址）。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.split("?", 1)[0].split("#", 1)[0]
+    path = urlsplit(text).path
+    if not path:
+        return ""
+    public_base = str(config.get_image_storage_settings().get("public_base_url") or "").rstrip("/")
+    if public_base and text.startswith(public_base + "/"):
+        return text[len(public_base) + 1:].lstrip("/")
+    if public_base:
+        base_path = urlsplit(public_base).path.rstrip("/")
+        if base_path and path.startswith(base_path + "/"):
+            return path[len(base_path) + 1:].lstrip("/")
+    marker = "/images/"
+    index = path.find(marker)
+    if index >= 0:
+        return path[index + len(marker):].lstrip("/")
+    if path.startswith("images/"):
+        return path[len("images/"):]
+    return ""
 
 
 async def filter_or_log(call: LoggedCall, text: str) -> None:
@@ -100,6 +142,47 @@ def create_router() -> APIRouter:
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+    @router.post("/api/image-tasks/batch")
+    async def create_batch_tasks(
+        body: ImageBatchTaskRequest,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ):
+        identity = require_identity(authorization)
+        base_url = resolve_image_base_url(request)
+        items: list[dict[str, object]] = []
+        for task in body.tasks:
+            reference_paths: list[str] = []
+            for url in task.reference_urls:
+                rel = _storage_rel_from_url(url)
+                if rel:
+                    reference_paths.append(rel)
+            mask_paths: list[str] = []
+            for url in task.mask_urls:
+                rel = _storage_rel_from_url(url)
+                if rel:
+                    mask_paths.append(rel)
+            items.append({
+                "client_task_id": task.client_task_id,
+                "mode": "edit" if task.mode == "edit" else "generate",
+                "prompt": task.prompt,
+                "model": str(task.model or config.default_image_model),
+                "size": task.size,
+                "quality": task.quality,
+                "reference_paths": reference_paths,
+                "mask_paths": mask_paths,
+            })
+        try:
+            tasks = await run_in_threadpool(
+                image_task_service.submit_batch,
+                identity,
+                items=items,
+                base_url=base_url,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return {"tasks": tasks}
 
     @router.post("/api/image-tasks/{task_id}/resume-poll")
     async def resume_image_poll(

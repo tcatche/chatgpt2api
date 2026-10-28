@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import queue
 import threading
 import time
@@ -9,8 +10,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
+
 from services.config import DATA_DIR, config
-from services.content_filter import request_text
+from services.content_filter import check_request, request_text
+from services.image_storage_service import image_storage_service
 from services.log_service import LOG_TYPE_CALL, log_service
 from services.protocol import openai_v1_image_edit, openai_v1_image_generations
 
@@ -24,6 +28,29 @@ UNFINISHED_STATUSES = {TASK_STATUS_QUEUED, TASK_STATUS_RUNNING}
 
 def _now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _load_stored_image(rel: str) -> tuple[bytes, str, str]:
+    """按图片存储相对路径读取参考图，返回 (bytes, 文件名, mime)。"""
+    try:
+        data = image_storage_service.get_bytes(rel)
+    except Exception as exc:
+        raise RuntimeError(f"参考图读取失败：{rel}") from exc
+    name = Path(rel).name or "image.png"
+    mime_type = mimetypes.guess_type(name)[0] or "image/png"
+    return data, name, mime_type
+
+
+def _review_or_raise(text: object) -> None:
+    try:
+        check_request(str(text or ""))
+    except HTTPException as exc:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            message = str(detail.get("error") or "")
+        else:
+            message = str(detail or "")
+        raise RuntimeError(message or "内容审核未通过") from exc
 
 
 def _timestamp(value: object) -> float:
@@ -171,6 +198,40 @@ class ImageTaskService:
         }
         return self._submit(identity, client_task_id=client_task_id, mode="edit", payload=payload)
 
+    def submit_batch(
+        self,
+        identity: dict[str, object],
+        *,
+        items: list[dict[str, Any]],
+        base_url: str = "",
+    ) -> list[dict[str, Any]]:
+        """批量登记任务；参考图只存路径，执行时再读取，内容审核也放到执行阶段。"""
+        results: list[dict[str, Any]] = []
+        for item in items:
+            mode = "edit" if item.get("mode") == "edit" else "generate"
+            payload: dict[str, Any] = {
+                "prompt": item.get("prompt") or "",
+                "model": item.get("model") or config.default_image_model,
+                "n": 1,
+                "size": item.get("size"),
+                "quality": item.get("quality") or "auto",
+                "response_format": "url",
+                "base_url": base_url,
+                "review": True,
+            }
+            if mode == "edit":
+                payload["images"] = []
+                payload["mask"] = []
+                payload["image_paths"] = list(item.get("reference_paths") or [])
+                payload["mask_paths"] = list(item.get("mask_paths") or [])
+            results.append(self._submit(
+                identity,
+                client_task_id=str(item.get("client_task_id") or ""),
+                mode=mode,
+                payload=payload,
+            ))
+        return results
+
     def list_tasks(self, identity: dict[str, object], task_ids: list[str]) -> dict[str, Any]:
         owner = _owner_id(identity)
         requested_ids = [_clean(task_id) for task_id in task_ids if _clean(task_id)]
@@ -315,6 +376,15 @@ class ImageTaskService:
         # 将进度回调添加到 payload 中（handler 会提取并传递给 ConversationRequest）
         payload_with_progress = {**payload, "progress_callback": progress_callback}
         try:
+            if payload.get("review"):
+                _review_or_raise(payload.get("prompt"))
+            image_paths = payload.pop("image_paths", None)
+            mask_paths = payload.pop("mask_paths", None)
+            if image_paths is not None:
+                payload_with_progress["images"] = [_load_stored_image(rel) for rel in image_paths]
+                payload_with_progress["mask"] = [_load_stored_image(rel) for rel in (mask_paths or [])]
+            if mode == "edit" and not payload_with_progress.get("images"):
+                raise RuntimeError("未找到参考图")
             handler = self.edit_handler if mode == "edit" else self.generation_handler
             result = handler(payload_with_progress)
             if not isinstance(result, dict):

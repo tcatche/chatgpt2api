@@ -495,6 +495,24 @@ export async function createImageGenerationTask(clientTaskId: string, prompt: st
   });
 }
 
+export type ImageBatchTaskItem = {
+  client_task_id: string;
+  mode: "generate" | "edit";
+  prompt: string;
+  model?: string;
+  size?: string;
+  quality?: string;
+  reference_urls?: string[];
+  mask_urls?: string[];
+};
+
+export async function submitImageTaskBatch(tasks: ImageBatchTaskItem[]) {
+  return httpRequest<{ tasks: ImageTask[] }>("/api/image-tasks/batch", {
+    method: "POST",
+    body: { tasks },
+  });
+}
+
 export type ImageInputUploadResponse = {
   url: string;
   name: string;

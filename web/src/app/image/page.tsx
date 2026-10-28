@@ -19,14 +19,14 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
-  createImageEditTask,
-  createImageGenerationTask,
   fetchAccounts,
   fetchImageModelCatalog,
   fetchImageTasks,
   resumeImagePoll,
+  submitImageTaskBatch,
   uploadImageInput,
   type Account,
+  type ImageBatchTaskItem,
   type ImageModel,
   type ImageTask,
 } from "@/lib/api";
@@ -198,20 +198,6 @@ function dataUrlToFile(dataUrl: string, fileName: string, mimeType?: string) {
     bytes[index] = binary.charCodeAt(index);
   }
   return new File([bytes], fileName, { type: mimeType || matchedMimeType || "image/png" });
-}
-
-async function referenceImageToFile(image: StoredReferenceImage, fallbackName: string): Promise<File> {
-  if (image.dataUrl) {
-    return dataUrlToFile(image.dataUrl, image.name || fallbackName, image.type);
-  }
-  if (!image.url) {
-    throw new Error("参考图缺失");
-  }
-  const blob = (await resolveCachedImage(image.url)).blob;
-  if (!blob) {
-    throw new Error("读取参考图失败");
-  }
-  return new File([blob], image.name || fallbackName, { type: image.type || blob.type || "image/png" });
 }
 
 async function uploadReferenceImages(images: StoredReferenceImage[]): Promise<StoredReferenceImage[]> {
@@ -1539,91 +1525,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
       };
 
-      const buildTurnFiles = async (turn: ImageTurn) => {
-        if (turn.mode !== "edit") {
-          return { referenceFiles: [] as File[], maskFiles: [] as File[] };
+      const markImagesFailed = async (taskIds: string[], message: string) => {
+        if (taskIds.length === 0) {
+          return;
         }
-        const referenceFiles = await Promise.all(
-          turn.referenceImages.map((image, index) =>
-            referenceImageToFile(image, image.name || `${turn.id}-${index + 1}.png`),
-          ),
-        );
-        const maskFiles = await Promise.all(
-          turn.maskImages.map((image, index) =>
-            referenceImageToFile(image, image.name || `${turn.id}-mask-${index + 1}.png`),
-          ),
-        );
-        if (referenceFiles.length === 0) {
-          throw new Error("未找到可用于继续编辑的参考图");
-        }
-        return { referenceFiles, maskFiles };
-      };
-
-      const submitTurnImages = async (turn: ImageTurn, submitImageIds?: string[]) => {
-        const { referenceFiles, maskFiles } = await buildTurnFiles(turn);
-        const pendingImages = turn.images.filter(
-          (image) =>
-            image.status === "loading" &&
-            (!submitImageIds || submitImageIds.includes(image.taskId || image.id)),
-        );
-        const submitted: ImageTask[] = [];
-        for (const image of pendingImages) {
-          const taskId = image.taskId || image.id;
-          try {
-            const task = turn.mode === "edit"
-              ? await createImageEditTask(taskId, referenceFiles, turn.prompt, turn.model, turn.size, turn.quality, maskFiles)
-              : await createImageGenerationTask(taskId, turn.prompt, turn.model, turn.size, turn.quality);
-            submitted.push(task);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "任务提交失败";
-            await updateConversation(conversationId, (current) => {
-              const conversation = current ?? snapshot;
-              const turns = conversation.turns.map((item) => {
-                if (item.id !== turn.id) {
-                  return item;
-                }
-                const images = item.images.map((itemImage) =>
-                  (itemImage.taskId || itemImage.id) === taskId
-                    ? { ...itemImage, status: "error" as const, error: message }
-                    : itemImage,
-                );
-                const derived = deriveTurnStatus({ ...item, images });
-                return {
-                  ...item,
-                  ...derived,
-                  images,
-                };
-              });
-              return {
-                ...conversation,
-                updatedAt: new Date().toISOString(),
-                turns,
-              };
-            });
-            toast.error(`任务提交失败：${message}`);
-          }
-        }
-        if (submitted.length > 0) {
-          await applyTasks(submitted);
-        }
-      };
-
-      const markTurnImagesFailed = async (turnId: string, message: string) => {
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
-          const turns = conversation.turns.map((item) => {
-            if (item.id !== turnId) {
-              return item;
+          const turns = conversation.turns.map((turn) => {
+            if (!pendingTurnIdSet.has(turn.id)) {
+              return turn;
             }
-            const images = item.images.map((image) =>
-              image.status === "loading" ? { ...image, status: "error" as const, error: message } : image,
-            );
-            const derived = deriveTurnStatus({ ...item, images });
-            return {
-              ...item,
-              ...derived,
-              images,
-            };
+            let turnChanged = false;
+            const images = turn.images.map((image) => {
+              if (!taskIds.includes(image.taskId || image.id)) {
+                return image;
+              }
+              turnChanged = true;
+              return { ...image, status: "error" as const, error: message };
+            });
+            if (!turnChanged) {
+              return turn;
+            }
+            const derived = deriveTurnStatus({ ...turn, images });
+            return { ...turn, ...derived, images };
           });
           return {
             ...conversation,
@@ -1633,21 +1557,62 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
       };
 
-      try {
-        for (const turn of pendingTurns) {
-          const latestConversation = hydratedConversationsRef.current.get(conversationId) ?? null;
-          const latestTurn = latestConversation?.turns.find((item) => item.id === turn.id);
-          if (!latestTurn || !latestTurn.images.some((image) => image.status === "loading")) {
+      const submitPendingBatch = async (turns: ImageTurn[], missingTaskIds?: string[]) => {
+        const items: ImageBatchTaskItem[] = [];
+        for (const turn of turns) {
+          const images = turn.images.filter(
+            (image) =>
+              image.status === "loading" &&
+              (!missingTaskIds || (image.taskId ? missingTaskIds.includes(image.taskId) : false)),
+          );
+          if (images.length === 0) {
             continue;
           }
-          try {
-            await submitTurnImages(latestTurn);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "生成图片失败";
-            await markTurnImagesFailed(turn.id, message);
-            toast.error(message);
+          let referenceUrls: string[] = [];
+          let maskUrls: string[] = [];
+          if (turn.mode === "edit") {
+            try {
+              const [references, masks] = await Promise.all([
+                uploadReferenceImages(turn.referenceImages),
+                uploadReferenceImages(turn.maskImages),
+              ]);
+              referenceUrls = references.flatMap((image) => (image.url ? [image.url] : []));
+              maskUrls = masks.flatMap((image) => (image.url ? [image.url] : []));
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "参考图上传失败";
+              await markImagesFailed(images.map((image) => image.taskId || image.id), message);
+              toast.error(`参考图上传失败：${message}`);
+              continue;
+            }
+          }
+          for (const image of images) {
+            items.push({
+              client_task_id: image.taskId || image.id,
+              mode: turn.mode,
+              prompt: turn.prompt,
+              model: turn.model,
+              size: turn.size,
+              quality: turn.quality,
+              reference_urls: referenceUrls,
+              mask_urls: maskUrls,
+            });
           }
         }
+        const batchSize = 100;
+        for (let start = 0; start < items.length; start += batchSize) {
+          const chunk = items.slice(start, start + batchSize);
+          try {
+            await submitImageTaskBatch(chunk);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "任务提交失败";
+            await markImagesFailed(chunk.map((item) => item.client_task_id), message);
+            toast.error(`任务提交失败：${message}`);
+          }
+        }
+      };
+
+      try {
+        await submitPendingBatch(pendingTurns);
 
         let consecutiveErrors = 0;
         while (true) {
@@ -1674,49 +1639,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               await applyTasks(taskList.items);
             }
             if (taskList.missing_ids.length > 0) {
-              for (const turn of latestTurns) {
-                const missingImageIds = turn.images
-                  .filter(
-                    (image) =>
-                      image.status === "loading" &&
-                      image.taskId &&
-                      taskList.missing_ids.includes(image.taskId),
-                  )
-                  .map((image) => image.taskId || image.id);
-                if (missingImageIds.length === 0) {
-                  continue;
-                }
-                try {
-                  await submitTurnImages(turn, missingImageIds);
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : "生成图片失败";
-                  await updateConversation(conversationId, (current) => {
-                    const conversation = current ?? snapshot;
-                    const turns = conversation.turns.map((item) => {
-                      if (item.id !== turn.id) {
-                        return item;
-                      }
-                      const images = item.images.map((itemImage) =>
-                        missingImageIds.includes(itemImage.taskId || itemImage.id)
-                          ? { ...itemImage, status: "error" as const, error: message }
-                          : itemImage,
-                      );
-                      const derived = deriveTurnStatus({ ...item, images });
-                      return {
-                        ...item,
-                        ...derived,
-                        images,
-                      };
-                    });
-                    return {
-                      ...conversation,
-                      updatedAt: new Date().toISOString(),
-                      turns,
-                    };
-                  });
-                  toast.error(message);
-                }
-              }
+              await submitPendingBatch(latestTurns, taskList.missing_ids);
             }
           } catch (pollError) {
             consecutiveErrors += 1;

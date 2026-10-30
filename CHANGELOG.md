@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [修复] 通用对话框限制最大高度并在内部滚动，OAuth 登录等长表单弹窗在小屏上不再超过屏幕被裁切。
+
 ## 1.9.20 - 2026-10-30
 
 + [清理] 移除一次性维护接口 `POST /api/image-conversations/migrate-inputs`，连同其服务方法与测试；参考图 base64 迁移已完成。

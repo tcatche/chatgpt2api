@@ -95,7 +95,7 @@ function ImageManagerContent() {
   const [dialogVisible, setDialogVisible] = useState(false);
   const deleteTargetRef = useRef<ManagedImage | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
-  const [deleteMode, setDeleteMode] = useState<"selected" | "filtered" | "byDate" | "byConversation" | null>(null);
+  const [deleteMode, setDeleteMode] = useState<"selected" | "byDate" | "byConversation" | null>(null);
   const [deleteConversationId, setDeleteConversationId] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -114,7 +114,7 @@ function ImageManagerContent() {
   const safePage = Math.min(page, pageCount);
   const currentRows = filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
   const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
-  const selectedCount = deleteMode === "filtered" ? items.length : deleteMode === "byDate" ? 0 : selectedPaths.length;
+  const selectedCount = deleteMode === "byDate" ? 0 : selectedPaths.length;
   const deleteTargetConversationTotal = deleteConversationId === UNLINKED_CONVERSATION_ID
     ? unlinkedTotal
     : conversations.find((item) => item.id === deleteConversationId)?.image_total ?? 0;
@@ -256,11 +256,9 @@ function ImageManagerContent() {
     }
     setIsDeleting(true);
     try {
-      const data = deleteMode === "filtered"
-        ? await deleteManagedImages({ start_date: startDate, end_date: endDate, all_matching: true })
-        : deleteMode === "byConversation"
-          ? await deleteManagedImages({ conversation_id: deleteConversationId })
-          : await deleteManagedImages({ paths: selectedPaths });
+      const data = deleteMode === "byConversation"
+        ? await deleteManagedImages({ conversation_id: deleteConversationId })
+        : await deleteManagedImages({ paths: selectedPaths });
       toast.success(`已删除 ${data.removed} 张图片`);
       const resetConversationFilter =
         deleteMode === "byConversation" && selectedConversationId === deleteConversationId;
@@ -282,7 +280,7 @@ function ImageManagerContent() {
   };
 
   const handleBatchDownload = async () => {
-    const paths = deleteMode === "filtered" ? items.map((item) => item.rel) : selectedPaths;
+    const paths = selectedPaths;
     if (paths.length === 0) return;
     setIsDownloading(true);
     try {
@@ -325,7 +323,6 @@ function ImageManagerContent() {
             {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Search className="size-4" />}
             查询
           </Button>
-          {/* TODO: 待废弃 —— 「删除匹配日期」入口已隐藏，按日期删除改由下方快捷操作承担 */}
         </div>
       </div>
 
@@ -768,10 +765,10 @@ function ImageManagerContent() {
         onOpenChange={setLightboxOpen}
         onIndexChange={setLightboxIndex}
       />
-      <Dialog open={deleteMode === "selected" || deleteMode === "filtered"} onOpenChange={(open) => (!open ? setDeleteMode(null) : null)}>
+      <Dialog open={deleteMode === "selected"} onOpenChange={(open) => (!open ? setDeleteMode(null) : null)}>
         <DialogContent showCloseButton={false} className="rounded-2xl p-6">
           <DialogHeader className="gap-2">
-            <DialogTitle>{deleteMode === "filtered" ? "删除匹配日期的图片" : "删除所选图片"}</DialogTitle>
+            <DialogTitle>删除所选图片</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-stone-600">
             确认删除 {selectedCount} 张图片吗？删除后无法恢复。

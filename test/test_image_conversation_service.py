@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import base64
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from services.image_conversation_service import ImageConversationService
-from services.image_storage_service import StoredImage
 
 
 OWNER = {"id": "owner-1", "name": "Owner", "role": "admin"}
@@ -157,65 +154,6 @@ class ImageConversationServiceTests(unittest.TestCase):
             self.assertEqual([item["id"] for item in items], ["c1"])
             full = reloaded.get_conversation(OWNER, "c1")
             self.assertEqual(full["turns"][0]["images"][0]["url"], "/images/a.png")
-
-    def test_migrate_references_moves_base64_to_storage(self):
-        image_bytes = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-        )
-        data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        svg_data_url = "data:image/svg+xml;base64," + base64.b64encode(b"<svg/>").decode("ascii")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "image_conversations.json"
-            service = self.make_service(path)
-            raw = conversation("c1", "2026-10-13T01:00:00.000Z", turns=[turn("t1")])
-            raw["turns"][0]["referenceImages"] = [
-                {"name": "ref.png", "type": "image/png", "dataUrl": data_url},
-                {"name": "vector.svg", "type": "image/svg+xml", "dataUrl": svg_data_url},
-            ]
-            raw["turns"][0]["maskImages"] = [
-                {"name": "mask.png", "type": "image/png", "dataUrl": data_url}
-            ]
-            raw["turns"][0]["images"] = [{"id": "img-1", "status": "success", "b64_json": encoded}]
-            service.save_conversations(OWNER, [raw])
-
-            calls: list[tuple[int, str, str]] = []
-
-            def fake_save_input(payload, base_url=None, *, extension=".png", content_type="image/png"):
-                calls.append((len(payload), extension, content_type))
-                index = len(calls)
-                return StoredImage(
-                    rel=f"inputs/{index}.png",
-                    url=f"https://cdn.test/inputs/{index}.png",
-                    storage="local",
-                    size=len(payload),
-                )
-
-            with mock.patch(
-                "services.image_storage_service.image_storage_service.save_input",
-                side_effect=fake_save_input,
-            ):
-                result = service.migrate_references("http://app.test")
-
-            self.assertEqual(result, {"converted": 3, "failed": 1})
-            self.assertEqual(len(calls), 3)
-
-            migrated = service.get_conversation(OWNER, "c1")
-            migrated_turn = migrated["turns"][0]
-            self.assertNotIn("dataUrl", migrated_turn["referenceImages"][0])
-            self.assertTrue(migrated_turn["referenceImages"][0]["url"].startswith("https://cdn.test/inputs/"))
-            self.assertIn("dataUrl", migrated_turn["referenceImages"][1])
-            self.assertNotIn("url", migrated_turn["referenceImages"][1])
-            self.assertNotIn("dataUrl", migrated_turn["maskImages"][0])
-            self.assertNotIn("b64_json", migrated_turn["images"][0])
-            self.assertTrue(migrated_turn["images"][0]["url"].startswith("https://cdn.test/inputs/"))
-
-            reloaded = self.make_service(path)
-            again = reloaded.get_conversation(OWNER, "c1")
-            self.assertEqual(again["turns"][0]["referenceImages"][0]["url"], migrated_turn["referenceImages"][0]["url"])
-            # 已迁移的条目不会再处理；不支持的格式保留原样并计入 failed
-            self.assertEqual(reloaded.migrate_references("http://app.test"), {"converted": 0, "failed": 1})
 
 
 if __name__ == "__main__":

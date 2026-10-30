@@ -33,6 +33,8 @@ git_cache/
 loginwithpassword_*/
 logwithemailverifycode_*/
 test_batch_output/
+data-gym-cache/
+chatgpt2api-test-image.png
 
 # Local CodeGraph index
 .codegraph/

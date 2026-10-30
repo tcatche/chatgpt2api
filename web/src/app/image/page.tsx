@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
 import { ImageDrawingDialog } from "@/app/image/components/image-drawing-dialog";
-import { ImageResults, type ImageLightboxItem } from "@/app/image/components/image-results";
+import { ImageResults, buildTurnLightboxImages, hasTurnLightboxImages, type ImageLightboxGroup, type ImageLightboxGroupKind, type ImageLightboxItem } from "@/app/image/components/image-results";
 import { ImageSidebar } from "@/app/image/components/image-sidebar";
 import { ImageLightbox } from "@/components/image-lightbox";
 import {
@@ -584,6 +584,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
+  const [lightboxGroup, setLightboxGroup] = useState<{ turnId: string; kind: ImageLightboxGroupKind } | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [drawingDialog, setDrawingDialog] = useState<
@@ -1451,15 +1452,55 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     toast.success("已复用这条提示词配置");
   }, [updateConversation]);
 
-  const openLightbox = useCallback((images: ImageLightboxItem[], index: number) => {
-    if (images.length === 0) {
+  const openLightbox = useCallback((group: ImageLightboxGroup) => {
+    if (group.images.length === 0) {
       return;
     }
 
-    setLightboxImages(images);
-    setLightboxIndex(Math.max(0, Math.min(index, images.length - 1)));
+    setLightboxGroup({ turnId: group.turnId, kind: group.kind });
+    setLightboxImages(group.images);
+    setLightboxIndex(Math.max(0, Math.min(group.index, group.images.length - 1)));
     setLightboxOpen(true);
   }, []);
+
+  // 灯箱上下切换：只落在同一会话里有同类图片的轮次上，跳过被删除或空的轮次
+  const lightboxGroupTurns = useMemo(() => {
+    if (!lightboxGroup || !selectedConversation) {
+      return [];
+    }
+    return selectedConversation.turns.filter(
+      (turn) => !turn.resultsDeleted && hasTurnLightboxImages(turn, lightboxGroup.kind),
+    );
+  }, [lightboxGroup, selectedConversation]);
+
+  const lightboxGroupPosition = lightboxGroup
+    ? lightboxGroupTurns.findIndex((turn) => turn.id === lightboxGroup.turnId)
+    : -1;
+
+  const lightboxTurnLabel = useMemo(() => {
+    if (!lightboxGroup || !selectedConversation) {
+      return undefined;
+    }
+    const index = selectedConversation.turns.findIndex((turn) => turn.id === lightboxGroup.turnId);
+    return index < 0 ? undefined : `第 ${index + 1} / ${selectedConversation.turns.length} 轮`;
+  }, [lightboxGroup, selectedConversation]);
+
+  const goToAdjacentLightboxTurn = useCallback((direction: -1 | 1) => {
+    if (!lightboxGroup || lightboxGroupPosition < 0) {
+      return;
+    }
+    const target = lightboxGroupTurns[lightboxGroupPosition + direction];
+    if (!target) {
+      return;
+    }
+    const images = buildTurnLightboxImages(target, lightboxGroup.kind);
+    if (images.length === 0) {
+      return;
+    }
+    setLightboxGroup({ turnId: target.id, kind: lightboxGroup.kind });
+    setLightboxImages(images);
+    setLightboxIndex((current) => Math.min(current, images.length - 1));
+  }, [lightboxGroup, lightboxGroupPosition, lightboxGroupTurns]);
 
   const createLoadingImages = (turnId: string, count: number) =>
     Array.from({ length: count }, (_, index) => {
@@ -2199,6 +2240,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         open={lightboxOpen}
         onOpenChange={setLightboxOpen}
         onIndexChange={setLightboxIndex}
+        hasPreviousGroup={lightboxGroupPosition > 0}
+        hasNextGroup={lightboxGroupPosition >= 0 && lightboxGroupPosition < lightboxGroupTurns.length - 1}
+        onPreviousGroup={() => goToAdjacentLightboxTurn(-1)}
+        onNextGroup={() => goToAdjacentLightboxTurn(1)}
+        groupLabel={lightboxGroupTurns.length > 1 ? lightboxTurnLabel : undefined}
       />
 
       <ImageDrawingDialog

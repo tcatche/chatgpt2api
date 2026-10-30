@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, X } from "lucide-react";
 
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { resolveCachedImage } from "@/lib/image-cache";
@@ -21,6 +21,14 @@ type ImageLightboxProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onIndexChange: (index: number) => void;
+  /** 同会话内上一组图片（上一个生图任务）；不传则不显示上下切换 */
+  hasPreviousGroup?: boolean;
+  /** 同会话内下一组图片（下一个生图任务） */
+  hasNextGroup?: boolean;
+  onPreviousGroup?: () => void;
+  onNextGroup?: () => void;
+  /** 当前组在会话中的位置标签，例如「第 2 / 5 轮」 */
+  groupLabel?: string;
 };
 
 type ImageTransform = {
@@ -95,6 +103,11 @@ export function ImageLightbox({
   open,
   onOpenChange,
   onIndexChange,
+  hasPreviousGroup = false,
+  hasNextGroup = false,
+  onPreviousGroup,
+  onNextGroup,
+  groupLabel,
 }: ImageLightboxProps) {
   const gestureRef = useRef<TouchGesture | null>(null);
   const lastTapRef = useRef(0);
@@ -155,6 +168,14 @@ export function ImageLightbox({
     if (hasNext) onIndexChange(currentIndex + 1);
   }, [hasNext, currentIndex, onIndexChange]);
 
+  const goPreviousGroup = useCallback(() => {
+    if (hasPreviousGroup) onPreviousGroup?.();
+  }, [hasPreviousGroup, onPreviousGroup]);
+
+  const goNextGroup = useCallback(() => {
+    if (hasNextGroup) onNextGroup?.();
+  }, [hasNextGroup, onNextGroup]);
+
   useEffect(() => {
     resetTransform();
   }, [current?.id, open, resetTransform]);
@@ -178,12 +199,18 @@ export function ImageLightbox({
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         goNext();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        goPreviousGroup();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        goNextGroup();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, goPrev, goNext]);
+  }, [open, goPrev, goNext, goPreviousGroup, goNextGroup]);
 
   const handleDownload = useCallback(async () => {
     if (!current) return;
@@ -365,6 +392,11 @@ export function ImageLightbox({
           </DialogPrimitive.Title>
 
           <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] right-4 z-10 flex items-center gap-2">
+            {groupLabel ? (
+              <span className="hidden items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90 sm:inline-flex">
+                {groupLabel}
+              </span>
+            ) : null}
             {current.sizeLabel || current.dimensions ? (
               <span className="rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
                 {[current.sizeLabel, current.dimensions].filter(Boolean).join(" · ")}
@@ -440,6 +472,30 @@ export function ImageLightbox({
               aria-label="下一张"
             >
               <ChevronRight className="size-5" />
+            </button>
+          )}
+
+          {hasPreviousGroup && transform.scale <= minScale && (
+            <button
+              type="button"
+              onClick={goPreviousGroup}
+              className="absolute top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-10 inline-flex size-10 -translate-x-1/2 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
+              aria-label="上一个生图任务"
+              title="上一个生图任务"
+            >
+              <ChevronUp className="size-5" />
+            </button>
+          )}
+
+          {hasNextGroup && transform.scale <= minScale && (
+            <button
+              type="button"
+              onClick={goNextGroup}
+              className="absolute bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] left-1/2 z-10 inline-flex size-10 -translate-x-1/2 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
+              aria-label="下一个生图任务"
+              title="下一个生图任务"
+            >
+              <ChevronDown className="size-5" />
             </button>
           )}
         </DialogPrimitive.Content>

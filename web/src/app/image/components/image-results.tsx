@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { getImmediateCachedImageSource, resolveCachedImage } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
-import type { ImageConversation, ImageTurnStatus, StoredImage, StoredReferenceImage } from "@/store/image-conversations";
+import type { ImageConversation, ImageTurn, ImageTurnStatus, StoredImage, StoredReferenceImage } from "@/store/image-conversations";
 
 export type ImageLightboxItem = {
   id: string;
@@ -16,9 +16,18 @@ export type ImageLightboxItem = {
   dimensions?: string;
 };
 
+export type ImageLightboxGroupKind = "results" | "references";
+
+export type ImageLightboxGroup = {
+  turnId: string;
+  kind: ImageLightboxGroupKind;
+  images: ImageLightboxItem[];
+  index: number;
+};
+
 type ImageResultsProps = {
   selectedConversation: ImageConversation | null;
-  onOpenLightbox: (images: ImageLightboxItem[], index: number) => void;
+  onOpenLightbox: (group: ImageLightboxGroup) => void;
   onContinueEdit: (conversationId: string, image: StoredImage | StoredReferenceImage) => void;
   onAnnotateImage: (conversationId: string, image: StoredImage, source: string) => void;
   onDeletePrompt: (conversationId: string, turnId: string) => void;
@@ -34,6 +43,9 @@ type ImageResultsProps = {
 // Blob URL 缓存：避免 base64 超长字符串在 DOM 中，改用短小的 blob: URL
 const b64BlobUrlCache = new Map<string, string>();
 
+// 结果图尺寸缓存：灯箱跨轮次切换时也要显示同一份尺寸，放模块级避免随组件丢失
+const imageDimensions = new Map<string, string>();
+
 function getStoredImageSrc(image: StoredImage) {
   if (image.b64_json) {
     let url = b64BlobUrlCache.get(image.b64_json);
@@ -48,6 +60,39 @@ function getStoredImageSrc(image: StoredImage) {
     return url;
   }
   return image.url || "";
+}
+
+/** 该轮是否至少有一张可在灯箱里展示的图，用于决定上下切换时能否停在它上面。 */
+export function hasTurnLightboxImages(turn: ImageTurn, kind: ImageLightboxGroupKind) {
+  if (kind === "references") {
+    return turn.referenceImages.length + turn.maskImages.length > 0;
+  }
+  return turn.images.some((image) => image.status === "success" && Boolean(image.b64_json || image.url));
+}
+
+export function buildTurnLightboxImages(turn: ImageTurn, kind: ImageLightboxGroupKind): ImageLightboxItem[] {
+  if (kind === "references") {
+    return [
+      ...turn.referenceImages.map((image, index) => ({
+        id: `${turn.id}-reference-${index}`,
+        src: image.url || image.dataUrl || "",
+      })),
+      ...turn.maskImages.map((image, index) => ({
+        id: `${turn.id}-mask-${index}`,
+        src: image.url || image.dataUrl || "",
+      })),
+    ];
+  }
+  return turn.images.flatMap((image) => {
+    const src = image.status === "success" ? getStoredImageSrc(image) : "";
+    if (!src) return [];
+    return [{
+      id: image.id,
+      src,
+      sizeLabel: image.b64_json ? formatBase64ImageSize(image.b64_json) : undefined,
+      dimensions: imageDimensions.get(image.id),
+    }];
+  });
 }
 
 async function downloadStoredImage(image: StoredImage, index: number) {
@@ -96,7 +141,6 @@ export function ImageResults({
   onDismissErrors,
   formatConversationTime,
 }: ImageResultsProps) {
-  const imageDimensionsRef = useRef<Record<string, string>>({});
   const [currentTime, setCurrentTime] = useState(Date.now());
   
   // 仅在存在 loading 图片时启动定时器，避免空闲时无谓重渲染
@@ -113,9 +157,9 @@ export function ImageResults({
 
   const updateImageDimensions = (id: string, width: number, height: number) => {
     const dimensions = formatImageDimensions(width, height);
-    // 使用 ref 存储，不触发 React 重渲染，消除级联重渲染
-    if (imageDimensionsRef.current[id] !== dimensions) {
-      imageDimensionsRef.current[id] = dimensions;
+    // 使用模块级缓存，不触发 React 重渲染，消除级联重渲染
+    if (imageDimensions.get(id) !== dimensions) {
+      imageDimensions.set(id, dimensions);
     }
   };
 
@@ -147,29 +191,8 @@ export function ImageResults({
   return (
     <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 sm:gap-8">
       {selectedConversation.turns.map((turn, turnIndex) => {
-        const referenceLightboxImages = [
-          ...turn.referenceImages.map((image, index) => ({
-            id: `${turn.id}-reference-${index}`,
-            src: image.url || image.dataUrl || "",
-          })),
-          ...turn.maskImages.map((image, index) => ({
-            id: `${turn.id}-mask-${index}`,
-            src: image.url || image.dataUrl || "",
-          })),
-        ];
-        const successfulTurnImages = turn.images.flatMap((image) => {
-          const src = image.status === "success" ? getStoredImageSrc(image) : "";
-          return src
-            ? [
-                {
-                  id: image.id,
-                  src,
-                  sizeLabel: image.b64_json ? formatBase64ImageSize(image.b64_json) : undefined,
-                  dimensions: imageDimensionsRef.current[image.id],
-                },
-              ]
-            : [];
-        });
+        const referenceLightboxImages = buildTurnLightboxImages(turn, "references");
+        const successfulTurnImages = buildTurnLightboxImages(turn, "results");
 
         return (
           <div key={turn.id} className="flex flex-col gap-3 sm:gap-4">
@@ -217,7 +240,7 @@ export function ImageResults({
                           <div key={`${turn.id}-${image.name}-${index}`} className="flex flex-col items-end gap-2">
                             <button
                               type="button"
-                              onClick={() => onOpenLightbox(referenceLightboxImages, index)}
+                              onClick={() => onOpenLightbox({ turnId: turn.id, kind: "references", images: referenceLightboxImages, index })}
                               className="group relative h-24 w-24 overflow-hidden border border-stone-200/80 bg-stone-100/60 text-left transition hover:border-stone-300"
                               aria-label={`预览参考图 ${image.name || index + 1}`}
                             >
@@ -242,7 +265,7 @@ export function ImageResults({
                           <div key={`${turn.id}-mask-${index}`} className="flex flex-col items-end gap-2">
                             <button
                               type="button"
-                              onClick={() => onOpenLightbox(referenceLightboxImages, turn.referenceImages.length + index)}
+                              onClick={() => onOpenLightbox({ turnId: turn.id, kind: "references", images: referenceLightboxImages, index: turn.referenceImages.length + index })}
                               className="group relative h-24 w-24 overflow-hidden border border-stone-200/80 bg-stone-300 text-left transition hover:border-stone-400"
                               aria-label={`预览标注遮罩 ${index + 1}`}
                             >
@@ -274,7 +297,7 @@ export function ImageResults({
                       if (image.status === "success" && imageSrc) {
                         const currentIndex = successfulTurnImages.findIndex((item) => item.id === image.id);
                         const sizeLabel = image.b64_json ? formatBase64ImageSize(image.b64_json) : "";
-                        const dimensions = imageDimensionsRef.current[image.id];
+                        const dimensions = imageDimensions.get(image.id);
                         const imageMeta = [sizeLabel, dimensions].filter(Boolean).join(" · ");
 
                         return (
@@ -293,7 +316,7 @@ export function ImageResults({
                                   event.currentTarget.naturalHeight,
                                 );
                               }}
-                              onOpen={() => onOpenLightbox(successfulTurnImages, currentIndex)}
+                              onOpen={() => onOpenLightbox({ turnId: turn.id, kind: "results", images: successfulTurnImages, index: currentIndex })}
                             />
                             <div className="flex flex-col gap-2 px-0.5 py-1 text-[10px] sm:px-3 sm:py-3 sm:text-xs">
                               <div data-slot="image-result-meta" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-stone-500">

@@ -1078,8 +1078,18 @@ class AccountService:
             account = self._accounts.get(access_token)
             return dict(account) if account else None
 
+    @staticmethod
+    def _sort_by_created_desc(items: list[dict]) -> list[dict]:
+        """按创建时间倒序排列，缺少创建时间的账号排在末尾。"""
+        earliest = datetime.min.replace(tzinfo=timezone.utc)
+        return sorted(
+            items,
+            key=lambda item: AccountService._parse_time(item.get("created_at")) or earliest,
+            reverse=True,
+        )
+
     def list_accounts(self) -> list[dict]:
-        """返回所有账号的副本，并为每个账号附加当前图片在途数 image_inflight。
+        """按创建时间倒序返回所有账号的副本，并为每个账号附加当前图片在途数 image_inflight。
 
         image_inflight 为内存态并发计数(账号正在生成、尚未结束的图片数)。号池空闲时
         若某账号该值持续 > 0，说明其并发槽位泄漏、已被静默排除出调度，可借此在 UI 上诊断。
@@ -1091,7 +1101,7 @@ class AccountService:
                 token = account.get("access_token") or ""
                 account["image_inflight"] = int(self._image_inflight.get(token, 0))
                 result.append(account)
-            return result
+        return self._sort_by_created_desc(result)
 
     def list_limited_tokens(self) -> list[str]:
         with self._lock:
@@ -1193,7 +1203,7 @@ class AccountService:
                 if account is not None:
                     self._accounts[access_token] = account
             self._save_accounts()
-            items = [dict(item) for item in self._accounts.values()]
+            items = self._sort_by_created_desc([dict(item) for item in self._accounts.values()])
             log_service.add(LOG_TYPE_ACCOUNT, f"新增 {added} 个账号，跳过 {skipped} 个",
                             {"added": added, "skipped": skipped})
         return {"added": added, "skipped": skipped, "items": items}
@@ -1220,7 +1230,7 @@ class AccountService:
                     self._index = 0
                 self._save_accounts()
                 log_service.add(LOG_TYPE_ACCOUNT, f"删除 {removed} 个账号", {"removed": removed})
-            items = [dict(item) for item in self._accounts.values()]
+            items = self._sort_by_created_desc([dict(item) for item in self._accounts.values()])
         return {"removed": removed, "items": items}
 
     def update_account(self, access_token: str, updates: dict, quiet: bool = False) -> dict | None:

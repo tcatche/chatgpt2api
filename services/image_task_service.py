@@ -205,7 +205,10 @@ class ImageTaskService:
         items: list[dict[str, Any]],
         base_url: str = "",
     ) -> list[dict[str, Any]]:
-        """批量登记任务；参考图只存路径，执行时再读取，内容审核也放到执行阶段。"""
+        """批量登记任务；参考图只存路径，执行时再读取，内容审核也放到执行阶段。
+
+        整批只写一次任务表：逐条登记时跳过保存，避免 N 个任务触发 N 次全量写盘。
+        """
         results: list[dict[str, Any]] = []
         for item in items:
             mode = "edit" if item.get("mode") == "edit" else "generate"
@@ -229,7 +232,11 @@ class ImageTaskService:
                 client_task_id=str(item.get("client_task_id") or ""),
                 mode=mode,
                 payload=payload,
+                persist=False,
             ))
+        if results:
+            with self._lock:
+                self._save_locked()
         return results
 
     def list_tasks(self, identity: dict[str, object], task_ids: list[str]) -> dict[str, Any]:
@@ -263,6 +270,7 @@ class ImageTaskService:
         client_task_id: str,
         mode: str,
         payload: dict[str, Any],
+        persist: bool = True,
     ) -> dict[str, Any]:
         task_id = _clean(client_task_id)
         if not task_id:
@@ -275,7 +283,7 @@ class ImageTaskService:
             cleaned = self._cleanup_locked()
             task = self._tasks.get(key)
             if task is not None:
-                if cleaned:
+                if cleaned and persist:
                     self._save_locked()
                 return _public_task(task)
             task = {
@@ -291,7 +299,8 @@ class ImageTaskService:
                 "created_ts": time.time(),
             }
             self._tasks[key] = task
-            self._save_locked()
+            if persist:
+                self._save_locked()
             should_start = True
 
         if should_start:

@@ -102,6 +102,12 @@ function parseImageSize(size: string) {
 const activeConversationQueueIds = new Set<string>();
 let pollAbortController: AbortController | null = null;
 
+// 任务状态轮询：正常 2 秒一次；连续失败后降频重试，避免一次网关抖动就把整批任务判死。
+const TASK_POLL_INTERVAL_MS = 2000;
+const TASK_POLL_SLOW_RETRY_AFTER = 10;
+const TASK_POLL_SLOW_RETRY_DELAY_MS = 10000;
+const TASK_POLL_GIVE_UP_AFTER = 60;
+
 function getResultsDistanceFromBottom(element: HTMLElement) {
   return element.scrollHeight - element.scrollTop - element.clientHeight;
 }
@@ -1656,6 +1662,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         await submitPendingBatch(pendingTurns);
 
         let consecutiveErrors = 0;
+        let pollErrorNotified = false;
         while (true) {
           const latestConversation = hydratedConversationsRef.current.get(conversationId) ?? null;
           const latestTurns = (latestConversation?.turns ?? []).filter((turn) => pendingTurnIdSet.has(turn.id));
@@ -1672,10 +1679,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             break;
           }
 
-          await sleep(2000);
+          const waitMs = consecutiveErrors >= TASK_POLL_SLOW_RETRY_AFTER
+            ? TASK_POLL_SLOW_RETRY_DELAY_MS
+            : TASK_POLL_INTERVAL_MS;
+          await sleep(waitMs);
           try {
             const taskList = await fetchImageTasks(loadingTaskIds);
             consecutiveErrors = 0;
+            pollErrorNotified = false;
             if (taskList.items.length > 0) {
               await applyTasks(taskList.items);
             }
@@ -1684,8 +1695,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             }
           } catch (pollError) {
             consecutiveErrors += 1;
-            if (consecutiveErrors >= 10) {
+            if (consecutiveErrors >= TASK_POLL_GIVE_UP_AFTER) {
               throw pollError;
+            }
+            if (!pollErrorNotified) {
+              pollErrorNotified = true;
+              toast.error("图片状态同步失败，正在自动重试…");
             }
           }
         }

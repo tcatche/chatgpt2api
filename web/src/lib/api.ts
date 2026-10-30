@@ -564,13 +564,39 @@ export async function createImageEditTask(
   });
 }
 
-export async function fetchImageTasks(ids: string[]) {
+// 任务状态查询把 ID 拼在 query 里：任务一多 URL 就会超过网关的请求行上限（nginx 默认 8KB），
+// 表现为 Cloudflare 520。这里按固定分片查询再合并，单个 URL 控制在 3KB 左右。
+const IMAGE_TASK_QUERY_CHUNK_SIZE = 100;
+
+function fetchImageTasksChunk(ids: string[]) {
   const params = new URLSearchParams();
   if (ids.length > 0) {
     params.set("ids", ids.join(","));
   }
   params.set("_t", String(Date.now()));
   return httpRequest<ImageTaskListResponse>(`/api/image-tasks?${params.toString()}`);
+}
+
+export async function fetchImageTasks(ids: string[]) {
+  if (ids.length <= IMAGE_TASK_QUERY_CHUNK_SIZE) {
+    return fetchImageTasksChunk(ids);
+  }
+  const chunks: string[][] = [];
+  for (let start = 0; start < ids.length; start += IMAGE_TASK_QUERY_CHUNK_SIZE) {
+    chunks.push(ids.slice(start, start + IMAGE_TASK_QUERY_CHUNK_SIZE));
+  }
+  const settled = await Promise.allSettled(chunks.map((chunk) => fetchImageTasksChunk(chunk)));
+  const fulfilled = settled.filter(
+    (result): result is PromiseFulfilledResult<ImageTaskListResponse> => result.status === "fulfilled",
+  );
+  if (fulfilled.length === 0) {
+    const rejected = settled.find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
+    throw rejected?.reason ?? new Error("任务状态查询失败");
+  }
+  return {
+    items: fulfilled.flatMap((result) => result.value.items),
+    missing_ids: fulfilled.flatMap((result) => result.value.missing_ids),
+  };
 }
 
 export async function resumeImagePoll(taskId: string, extraTimeoutSecs = 30) {

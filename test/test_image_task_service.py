@@ -233,6 +233,30 @@ class ImageTaskServiceTests(unittest.TestCase):
         self.assertEqual(task["error"], "检测到敏感词")
         self.assertEqual(called, [])
 
+    def test_batch_submit_writes_task_store_once(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "image_tasks.json"
+            service = self.make_service(path)
+            items = [
+                {
+                    "client_task_id": f"batch-write-{index}",
+                    "mode": "generate",
+                    "prompt": f"prompt {index}",
+                    "model": "gpt-image-2",
+                }
+                for index in range(5)
+            ]
+
+            with mock.patch.object(service, "_enqueue"), mock.patch.object(
+                service, "_save_locked", wraps=service._save_locked
+            ) as save:
+                service.submit_batch(OWNER, items=items, base_url="http://local.test")
+                self.assertEqual(save.call_count, 1)
+
+            reloaded = self.make_service(path)
+            persisted = reloaded.list_tasks(OWNER, [item["client_task_id"] for item in items])["items"]
+            self.assertEqual(sorted(task["id"] for task in persisted), sorted(item["client_task_id"] for item in items))
+
     def test_global_concurrency_caps_workers_and_keeps_fifo_order(self):
         started: list[str] = []
         state = {"running": 0, "max_running": 0}

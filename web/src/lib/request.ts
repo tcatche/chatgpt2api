@@ -8,7 +8,7 @@ type RequestConfig = AxiosRequestConfig & {
 };
 
 type ErrorPayload = {
-    detail?: string | { error?: string | { message?: string } };
+    detail?: string | { error?: string | { message?: string } } | Array<{ msg?: unknown; message?: unknown }>;
     error?: string | { message?: string };
     message?: string;
 };
@@ -17,11 +17,21 @@ function errorMessageFromValue(value: unknown): string {
     if (typeof value === "string") {
         return value;
     }
+    // FastAPI 校验失败返回的是数组：[{ type, loc, msg, input }]，只取 msg 拼成一句可读文案。
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => errorMessageFromValue(item))
+            .filter(Boolean)
+            .join("；");
+    }
     if (!value || typeof value !== "object") {
         return "";
     }
 
-    const item = value as { error?: unknown; message?: unknown };
+    const item = value as { msg?: unknown; message?: unknown; error?: unknown };
+    if (typeof item.msg === "string") {
+        return item.msg;
+    }
     if (typeof item.message === "string") {
         return item.message;
     }

@@ -12,7 +12,7 @@ from urllib.parse import quote, urlparse
 
 from curl_cffi import requests
 from fastapi import HTTPException
-from PIL import Image
+from PIL import Image, ImageOps
 
 from services.config import DATA_DIR, config
 
@@ -20,6 +20,7 @@ IMAGE_INDEX_FILE = DATA_DIR / "image_index.json"
 IMAGE_INDEX_LOCK = Lock()
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 INPUT_PREFIX = "inputs"
+WEBP_QUALITY = 90
 
 
 class ImageStorageError(RuntimeError):
@@ -56,6 +57,20 @@ def _image_dimensions(payload: bytes) -> tuple[int, int] | None:
     try:
         with Image.open(io.BytesIO(payload)) as image:
             return image.size
+    except Exception:
+        return None
+
+
+def _encode_webp(payload: bytes) -> bytes | None:
+    """把结果图转成 WebP；解码或编码失败时返回 None，调用方保留原始字节。"""
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            image = ImageOps.exif_transpose(image)
+            if image.mode not in {"RGB", "RGBA"}:
+                image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="WEBP", quality=WEBP_QUALITY, method=4)
+            return buffer.getvalue() or None
     except Exception:
         return None
 
@@ -219,6 +234,12 @@ class ImageStorageService:
         content_type: str = "image/png",
     ) -> StoredImage:
         config.cleanup_old_images()
+        if config.image_webp_output and not prefix and extension != ".webp":
+            encoded = _encode_webp(image_data)
+            if encoded is not None:
+                image_data = encoded
+                extension = ".webp"
+                content_type = "image/webp"
         rel = self.make_relative_path(image_data, prefix=prefix, extension=extension)
         mode = self.mode()
         if mode not in {"local", "webdav", "both"}:

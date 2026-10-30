@@ -224,7 +224,8 @@ export function ImageLightbox({
     }
     const link = document.createElement("a");
     link.href = downloadSrc;
-    link.download = `image-${current.id}.png`;
+    const extension = /\.(webp|jpe?g|png|gif)(?:[?#]|$)/i.exec(current.src)?.[1]?.toLowerCase() || "png";
+    link.download = `image-${current.id}.${extension}`;
     link.click();
   }, [current, currentImageSrc]);
 

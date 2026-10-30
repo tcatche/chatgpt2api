@@ -479,6 +479,11 @@ class ConfigStore:
             return 3
 
     @property
+    def image_webp_output(self) -> bool:
+        """生图结果是否转码为 WebP 存储，默认开启。"""
+        return _normalize_bool(self.data.get("image_webp_output", True), True)
+
+    @property
     def custom_image_models(self) -> list[str]:
         """兼容旧配置；新版本由自动拉取的 image_models_cache 管理模型列表。"""
         return _normalize_custom_image_models(self.data.get("custom_image_models"))
@@ -662,6 +667,7 @@ class ConfigStore:
         data["image_timeout_retry_secs"] = self.image_timeout_retry_secs
         data["image_account_concurrency"] = self.image_account_concurrency
         data["image_max_concurrency"] = self.image_max_concurrency
+        data["image_webp_output"] = self.image_webp_output
         data["custom_image_models"] = self.custom_image_models
         data["image_models"] = self.image_models
         data["image_models_source"] = self.image_models_source

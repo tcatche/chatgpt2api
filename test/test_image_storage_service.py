@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,7 @@ class ImageStorageServiceTests(unittest.TestCase):
         self.mock_config.images_dir = self.images_dir
         self.mock_config.base_url = "http://app.test"
         self.mock_config.cleanup_old_images.return_value = 0
+        self.mock_config.image_webp_output = False
         self.mock_config.get_image_storage_settings.side_effect = lambda: dict(self.settings)
         FakeWebDAVClient.uploaded = {}
         FakeWebDAVClient.deleted = []
@@ -150,6 +152,31 @@ class ImageStorageServiceTests(unittest.TestCase):
 
         self.assertIn(normal.rel, rels)
         self.assertNotIn(stored_input.rel, rels)
+
+    def test_webp_output_converts_result_images(self):
+        self.mock_config.image_webp_output = True
+
+        stored = self.service().save(png_bytes(), "http://app.test")
+
+        self.assertTrue(stored.rel.endswith(".webp"))
+        payload = (self.images_dir / stored.rel).read_bytes()
+        self.assertEqual(payload[:4], b"RIFF")
+        self.assertEqual(payload[8:12], b"WEBP")
+        with Image.open(io.BytesIO(payload)) as image:
+            self.assertEqual(image.format, "WEBP")
+            self.assertEqual(image.size, (2, 2))
+
+    def test_webp_output_disabled_keeps_png(self):
+        stored = self.service().save(png_bytes(), "http://app.test")
+
+        self.assertTrue(stored.rel.endswith(".png"))
+
+    def test_webp_output_leaves_reference_inputs_untouched(self):
+        self.mock_config.image_webp_output = True
+
+        stored = self.service().save_input(png_bytes(), "http://app.test")
+
+        self.assertTrue(stored.rel.endswith(".png"))
 
     def test_disabled_storage_keeps_inputs_local_even_if_mode_is_webdav(self):
         self.settings.update({

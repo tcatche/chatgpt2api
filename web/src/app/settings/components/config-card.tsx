@@ -29,6 +29,7 @@ export function ConfigCard() {
   const setImagePollTimeoutSecs = useSettingsStore((state) => state.setImagePollTimeoutSecs);
   const setImageAccountConcurrency = useSettingsStore((state) => state.setImageAccountConcurrency);
   const setImageMaxConcurrency = useSettingsStore((state) => state.setImageMaxConcurrency);
+  const setImageWebpOutput = useSettingsStore((state) => state.setImageWebpOutput);
   const setDefaultImageModel = useSettingsStore((state) => state.setDefaultImageModel);
   const setImageSettleEnabled = useSettingsStore((state) => state.setImageSettleEnabled);
   const setImageRemoveConversationAfterResult = useSettingsStore((state) => state.setImageRemoveConversationAfterResult);
@@ -244,6 +245,16 @@ export function ConfigCard() {
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
             <p className="text-xs text-stone-500">全部账号合计同时执行的生图任务上限，默认 3；设为 1 即串行，超出后按提交顺序排队。</p>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3">
+              <Checkbox
+                checked={Boolean(config?.image_webp_output !== false)}
+                onCheckedChange={(checked) => setImageWebpOutput(Boolean(checked))}
+              />
+              <span className="text-sm text-stone-700">生成图转 WebP 存储</span>
+            </div>
+            <p className="text-xs leading-5 text-stone-500">开启后生图结果按 WebP（质量 90）存储，体积约为 PNG 的 1/6~1/10，手机加载更快；关闭则保留上游原 PNG。仅影响新生成的图片。</p>
           </div>
           <div className="space-y-4 rounded-xl border border-stone-200 bg-white px-4 py-4 md:col-span-2">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">

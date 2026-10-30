@@ -203,6 +203,7 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     image_poll_timeout_secs: Number(config.image_poll_timeout_secs || 120),
     image_account_concurrency: Number(config.image_account_concurrency || 3),
     image_max_concurrency: Number(config.image_max_concurrency || 3),
+    image_webp_output: Boolean(config.image_webp_output !== false),
     default_image_model: imageModels.includes(requestedDefaultImageModel)
       ? requestedDefaultImageModel
       : DEFAULT_IMAGE_MODEL,
@@ -333,6 +334,7 @@ type SettingsStore = {
   setImagePollTimeoutSecs: (value: string) => void;
   setImageAccountConcurrency: (value: string) => void;
   setImageMaxConcurrency: (value: string) => void;
+  setImageWebpOutput: (value: boolean) => void;
   setDefaultImageModel: (value: string) => void;
   setImageSettleEnabled: (value: boolean) => void;
   setImageCheckBeforeHitEnabled: (value: boolean) => void;
@@ -463,6 +465,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         image_poll_timeout_secs: Math.max(1, Number(config.image_poll_timeout_secs) || 120),
         image_account_concurrency: Math.max(1, Number(config.image_account_concurrency) || 3),
         image_max_concurrency: Math.max(1, Math.min(64, Number(config.image_max_concurrency) || 3)),
+        image_webp_output: Boolean(config.image_webp_output !== false),
         default_image_model: String(config.default_image_model || DEFAULT_IMAGE_MODEL).trim().toLowerCase(),
         image_settle_enabled: Boolean(config.image_settle_enabled !== false),
         image_check_before_hit_enabled: Boolean(config.image_check_before_hit_enabled !== false),
@@ -577,6 +580,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setImageMaxConcurrency: (value) => {
     set((state) => state.config ? { config: { ...state.config, image_max_concurrency: value } } : {});
+  },
+
+  setImageWebpOutput: (value) => {
+    set((state) => state.config ? { config: { ...state.config, image_webp_output: value } } : {});
   },
 
   setDefaultImageModel: (value) => {

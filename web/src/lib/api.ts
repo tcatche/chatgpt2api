@@ -178,6 +178,7 @@ export type SettingsConfig = {
   image_poll_timeout_secs?: number | string;
   image_account_concurrency?: number | string;
   image_max_concurrency?: number | string;
+  image_webp_output?: boolean;
   default_image_model?: string;
   custom_image_models?: string[];
   image_models?: string[];

@@ -120,7 +120,8 @@ async function downloadStoredImage(image: StoredImage, index: number) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `image-${index + 1}.png`;
+  const extension = /\.(webp|jpe?g|png|gif)(?:[?#]|$)/i.exec(image.url || "")?.[1]?.toLowerCase() || "png";
+  a.download = `image-${index + 1}.${extension}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

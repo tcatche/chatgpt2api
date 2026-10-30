@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import mimetypes
 import shutil
 import threading
 import time
@@ -13,12 +14,17 @@ from PIL import Image, ImageOps
 
 from services.config import config
 from services.image_conversation_service import image_conversation_service
-from services.image_storage_service import image_storage_service
+from services.image_storage_service import IMAGE_EXTENSIONS, image_storage_service
 from services.image_tags_service import load_tags, remove_tags
 from utils.log import logger
 
 THUMBNAIL_SIZE = (320, 320)
 UNLINKED_CONVERSATION_ID = "__unlinked__"
+
+
+def _media_type(relative_path: str) -> str:
+    """按扩展名给出响应媒体类型，WebP 与 PNG 混存时不能写死。"""
+    return mimetypes.guess_type(relative_path)[0] or "image/png"
 
 
 def _cleanup_empty_dirs(root: Path) -> None:
@@ -60,7 +66,7 @@ def get_image_response(relative_path: str) -> FileResponse | Response:
     }
     if image_storage_service.has_local(relative_path):
         return FileResponse(_safe_image_path(relative_path), headers=headers)
-    return Response(content=image_storage_service.get_bytes(relative_path), media_type="image/png", headers=headers)
+    return Response(content=image_storage_service.get_bytes(relative_path), media_type=_media_type(relative_path), headers=headers)
 
 
 def _thumbnail_path(relative_path: str) -> Path:
@@ -132,7 +138,7 @@ def get_image_download_response(relative_path: str) -> FileResponse:
     }
     return Response(
         content=image_storage_service.get_bytes(rel),
-        media_type="image/png",
+        media_type=_media_type(rel),
         headers=headers,
     )
 
@@ -385,7 +391,7 @@ def delete_to_target(target_free_mb: int, dry_run: bool = False) -> dict:
         return {"removed": 0, "current_free_mb": current_free, "target_free_mb": target_free_mb, "done": True}
 
     files = sorted(
-        (p for p in config.images_dir.rglob("*.png") if p.is_file()),
+        (p for p in config.images_dir.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS),
         key=lambda p: p.stat().st_mtime,
     )
     removed = 0

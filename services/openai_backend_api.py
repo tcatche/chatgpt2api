@@ -1052,6 +1052,19 @@ class OpenAIBackendAPI:
         payload = image.split(",", 1)[1] if image.startswith("data:") and "," in image else image
         return base64.b64decode(payload)
 
+    @staticmethod
+    def _upload_image_payload(image_data: bytes) -> tuple[bytes, str, int, int, str]:
+        """返回 (字节, mime, 宽, 高, 扩展名)；WebP 参考图转成 PNG 再上传，上游输入链路只走 PNG/JPEG。"""
+        with Image.open(BytesIO(image_data)) as image:
+            width, height = image.size
+            if str(image.format or "").upper() == "WEBP":
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                return buffer.getvalue(), "image/png", width, height, ".png"
+            mime_type = Image.MIME.get(image.format, "image/png")
+            extension = mimetypes.guess_extension(mime_type) or ".png"
+            return image_data, mime_type, width, height, extension
+
     def _upload_image(self, image: str, file_name: str = "image.png") -> Dict[str, Any]:
         """上传一张 base64 图片，返回底层文件元数据。"""
         data = self._decode_image_base64(image)
@@ -1065,9 +1078,8 @@ class OpenAIBackendAPI:
             candidate_path = Path(os.path.expanduser(image))
             if candidate_path.exists() and candidate_path.is_file():
                 file_name = candidate_path.name
-        image = Image.open(BytesIO(data))
-        width, height = image.size
-        mime_type = Image.MIME.get(image.format, "image/png")
+        data, mime_type, width, height, extension = self._upload_image_payload(data)
+        file_name = f"{Path(file_name).stem or 'image'}{extension}"
         path = "/backend-api/files"
         response = self._post_image_file_request(
             path,

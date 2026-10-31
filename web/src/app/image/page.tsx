@@ -1786,6 +1786,60 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [runConversationQueue],
   );
 
+  const handleBatchRegenerate = useCallback(
+    async (conversationId: string, turnIds: string[]) => {
+      const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
+      if (!conversation) {
+        return;
+      }
+      const selectedIds = new Set(turnIds);
+      const sourceTurns = conversation.turns.filter(
+        (turn) => selectedIds.has(turn.id) && Boolean(turn.prompt.trim()),
+      );
+      if (sourceTurns.length === 0) {
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const nextTurns: ImageTurn[] = sourceTurns.map((sourceTurn) => {
+        const nextTurnId = createId();
+        const count = Math.max(1, sourceTurn.count || sourceTurn.images.length || 1);
+        return {
+          id: nextTurnId,
+          prompt: sourceTurn.prompt,
+          model: sourceTurn.model,
+          mode: sourceTurn.mode,
+          referenceImages: sourceTurn.referenceImages,
+          maskImages: sourceTurn.maskImages,
+          count,
+          size: sourceTurn.size,
+          ratio: sourceTurn.ratio,
+          tier: sourceTurn.tier,
+          quality: sourceTurn.quality,
+          images: createLoadingImages(nextTurnId, count),
+          createdAt: now,
+          status: "queued",
+        };
+      });
+
+      const nextConversation = {
+        ...conversation,
+        updatedAt: now,
+        turns: [...conversation.turns, ...nextTurns],
+      };
+
+      // 一次性写入全部新轮次，再触发一次队列，避免逐条保存 + 多次入队
+      shouldStickToBottomRef.current = true;
+      const btn = scrollToLatestBtnRef.current;
+      if (btn) btn.style.display = "none";
+      setSelectedConversationId(conversationId);
+      await persistConversation(nextConversation);
+      void runConversationQueue(conversationId);
+      toast.success(`已加入 ${nextTurns.length} 个重新生成任务`);
+    },
+    [runConversationQueue],
+  );
+
   const handleRetryImage = useCallback(
     async (conversationId: string, turnId: string, imageId: string) => {
       const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
@@ -2196,6 +2250,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   onDeleteResults={openDeleteResultsConfirm}
                   onReuseTurnConfig={handleReuseTurnConfig}
                   onRegenerateTurn={handleRegenerateTurn}
+                  onBatchRegenerate={handleBatchRegenerate}
                   onRetryImage={handleRetryImage}
                   onTimeoutRetryContinue={handleTimeoutRetryContinue}
                   onDismissErrors={handleDismissErrors}

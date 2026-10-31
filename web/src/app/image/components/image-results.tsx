@@ -1,9 +1,11 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Brush, Clock3, Download, EyeOff, LoaderCircle, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { Brush, Clock3, Download, EyeOff, Layers, LoaderCircle, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { getImmediateCachedImageSource, resolveCachedImage } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
@@ -34,6 +36,7 @@ type ImageResultsProps = {
   onDeleteResults: (conversationId: string, turnId: string) => void;
   onReuseTurnConfig: (conversationId: string, turnId: string) => void | Promise<void>;
   onRegenerateTurn: (conversationId: string, turnId: string) => void | Promise<void>;
+  onBatchRegenerate: (conversationId: string, turnIds: string[]) => void | Promise<void>;
   onRetryImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
   onTimeoutRetryContinue: (taskId: string) => void | Promise<void>;
   onDismissErrors: (conversationId: string, turnId: string) => void | Promise<void>;
@@ -137,12 +140,16 @@ export function ImageResults({
   onDeleteResults,
   onReuseTurnConfig,
   onRegenerateTurn,
+  onBatchRegenerate,
   onRetryImage,
   onTimeoutRetryContinue,
   onDismissErrors,
   formatConversationTime,
 }: ImageResultsProps) {
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchSelection, setBatchSelection] = useState<string[]>([]);
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
   
   // 仅在存在 loading 图片时启动定时器，避免空闲时无谓重渲染
   const hasLoadingImages = selectedConversation?.turns.some(
@@ -161,6 +168,40 @@ export function ImageResults({
     // 使用模块级缓存，不触发 React 重渲染，消除级联重渲染
     if (imageDimensions.get(id) !== dimensions) {
       imageDimensions.set(id, dimensions);
+    }
+  };
+
+  // 批量重新生成：有提示词、且不在生成中的轮次才可以选
+  const regenerableTurns = (selectedConversation?.turns ?? []).filter(
+    (turn) => Boolean(turn.prompt.trim()) && turn.status !== "queued" && turn.status !== "generating",
+  );
+  const regenerableIds = regenerableTurns.map((turn) => turn.id);
+  const errorTurnIds = regenerableTurns
+    .filter((turn) => turn.status === "error" || turn.images.some((image) => image.status === "error"))
+    .map((turn) => turn.id);
+  const selectedTurns = regenerableTurns.filter((turn) => batchSelection.includes(turn.id));
+  const selectedImageCount = selectedTurns.reduce(
+    (sum, turn) => sum + Math.max(1, turn.count || turn.images.length || 1),
+    0,
+  );
+
+  const toggleBatchTurn = (turnId: string, checked: boolean) => {
+    setBatchSelection((current) =>
+      checked ? Array.from(new Set([...current, turnId])) : current.filter((id) => id !== turnId),
+    );
+  };
+
+  const handleBatchConfirm = async () => {
+    if (!selectedConversation || selectedTurns.length === 0) {
+      return;
+    }
+    setBatchSubmitting(true);
+    try {
+      await onBatchRegenerate(selectedConversation.id, selectedTurns.map((turn) => turn.id));
+      setBatchOpen(false);
+      setBatchSelection([]);
+    } finally {
+      setBatchSubmitting(false);
     }
   };
 
@@ -191,6 +232,23 @@ export function ImageResults({
 
   return (
     <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 sm:gap-8">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200/70 pb-3 dark:border-white/10">
+        <span className="text-xs text-stone-500">共 {selectedConversation.turns.length} 轮</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 rounded-full border-stone-200 bg-white px-3 text-stone-700 hover:bg-stone-50"
+          onClick={() => {
+            setBatchSelection([]);
+            setBatchOpen(true);
+          }}
+          disabled={regenerableIds.length === 0}
+        >
+          <Layers className="size-3.5" />
+          批量重新生成
+        </Button>
+      </div>
       {selectedConversation.turns.map((turn, turnIndex) => {
         const referenceLightboxImages = buildTurnLightboxImages(turn, "references");
         const successfulTurnImages = buildTurnLightboxImages(turn, "results");
@@ -499,6 +557,131 @@ export function ImageResults({
           </div>
         );
       })}
+
+      <Dialog
+        open={batchOpen}
+        onOpenChange={(open) => {
+          setBatchOpen(open);
+          if (!open) {
+            setBatchSelection([]);
+          }
+        }}
+      >
+        <DialogContent className="w-[min(94vw,640px)] rounded-2xl">
+          <DialogHeader className="gap-1">
+            <DialogTitle>批量重新生成</DialogTitle>
+            <p className="text-xs leading-5 text-stone-500">
+              勾选轮次后每轮各新增一次生成，不覆盖原有结果，会重新消耗额度。
+            </p>
+          </DialogHeader>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 rounded-full px-2.5 text-xs"
+              onClick={() => setBatchSelection(regenerableIds)}
+              disabled={regenerableIds.length === 0}
+            >
+              全选
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 rounded-full px-2.5 text-xs"
+              onClick={() => setBatchSelection(regenerableIds.filter((id) => !batchSelection.includes(id)))}
+              disabled={regenerableIds.length === 0}
+            >
+              反选
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 rounded-full px-2.5 text-xs"
+              onClick={() => setBatchSelection(errorTurnIds)}
+              disabled={errorTurnIds.length === 0}
+            >
+              选中出错的轮次{errorTurnIds.length > 0 ? `（${errorTurnIds.length}）` : ""}
+            </Button>
+            <button
+              type="button"
+              className="text-xs text-stone-400 transition hover:text-stone-700 disabled:opacity-50"
+              onClick={() => setBatchSelection([])}
+              disabled={batchSelection.length === 0}
+            >
+              清空
+            </button>
+          </div>
+          <div className="max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
+            {selectedConversation.turns.map((turn, turnIndex) => {
+              const eligible = regenerableIds.includes(turn.id);
+              const checked = batchSelection.includes(turn.id);
+              const imageCount = Math.max(1, turn.count || turn.images.length || 1);
+              const hasError = errorTurnIds.includes(turn.id);
+              return (
+                <div
+                  key={turn.id}
+                  onClick={() => {
+                    if (eligible) {
+                      toggleBatchTurn(turn.id, !checked);
+                    }
+                  }}
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-xl border px-3 py-2 text-xs transition",
+                    eligible
+                      ? "cursor-pointer border-stone-200 bg-white hover:bg-stone-50 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                      : "cursor-not-allowed border-stone-100 bg-stone-50 opacity-60 dark:border-white/5 dark:bg-white/5",
+                  )}
+                >
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={checked}
+                    disabled={!eligible}
+                    onClick={(event) => event.stopPropagation()}
+                    onCheckedChange={(value) => toggleBatchTurn(turn.id, Boolean(value))}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-stone-400">
+                      <span className="font-medium text-stone-700 dark:text-stone-200">第 {turnIndex + 1} 轮</span>
+                      <span>{getTurnStatusLabel(turn.status)}</span>
+                      {hasError ? <span className="text-rose-500">有失败图</span> : null}
+                      <span>{turn.model}</span>
+                      <span>{imageCount} 张</span>
+                      <span>{formatConversationTime(turn.createdAt)}</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-stone-700 dark:text-stone-200">
+                      {turn.prompt || "（无提示词）"}
+                    </span>
+                    {!eligible ? (
+                      <span className="mt-0.5 block text-[11px] text-stone-400">
+                        {turn.prompt.trim() ? "正在生成，等这一轮结束后再选" : "没有提示词，无法重新生成"}
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter className="items-center gap-2">
+            <span className="mr-auto text-xs text-stone-500">
+              已选 {selectedTurns.length} 个任务 · 共 {selectedImageCount} 张图
+            </span>
+            <Button type="button" variant="ghost" onClick={() => setBatchOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleBatchConfirm()}
+              disabled={selectedTurns.length === 0 || batchSubmitting}
+            >
+              {batchSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              确认重新生成
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

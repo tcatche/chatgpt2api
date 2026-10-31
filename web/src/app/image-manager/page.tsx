@@ -14,11 +14,38 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { compressAllImages, deleteImageTag, deleteManagedImages, deleteToTarget, downloadImages, downloadSingleImage, fetchImageStorage, fetchImageTags, fetchManagedImages, setImageTags, type ImageStorageStats, type ManagedImage, type ManagedImageConversation } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 
 const LONG_PRESS_MS = 800;
 const IMAGE_MANAGER_CHECKBOX_CLASS = "border-stone-300 bg-white/80 dark:border-white/35 dark:bg-white/5 data-[state=checked]:border-stone-950 dark:data-[state=checked]:border-white";
+
+// 缩略图显示比例：存在浏览器本地，只影响当前设备
+const THUMBNAIL_RATIO_STORAGE_KEY = "chatgpt2api:image-manager:thumbnail-ratio";
+const DEFAULT_THUMBNAIL_RATIO = "9 / 16";
+const THUMBNAIL_RATIOS = [
+  { value: "9 / 16", label: "9:16 竖版" },
+  { value: "3 / 4", label: "3:4 竖版" },
+  { value: "1 / 1", label: "1:1 方形" },
+  { value: "4 / 3", label: "4:3 横版" },
+  { value: "16 / 9", label: "16:9 横版" },
+  { value: "auto", label: "原始比例" },
+];
+const MIN_THUMBNAIL_ASPECT = 9 / 16;
+const MAX_THUMBNAIL_ASPECT = 16 / 9;
+
+function resolveThumbnailAspect(item: ManagedImage, ratio: string) {
+  if (ratio !== "auto") {
+    return ratio;
+  }
+  if (!item.width || !item.height) {
+    return DEFAULT_THUMBNAIL_RATIO;
+  }
+  // 原始比例模式下限制极端长宽，避免单张图把整行撑得过高
+  const value = Math.min(MAX_THUMBNAIL_ASPECT, Math.max(MIN_THUMBNAIL_ASPECT, item.width / item.height));
+  return String(value);
+}
 
 function formatSize(size: number) {
   return size > 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(2)} MB` : `${Math.ceil(size / 1024)} KB`;
@@ -85,6 +112,26 @@ function ImageManagerContent() {
   }, []);
 
   useEffect(() => { void loadStorage(); }, [loadStorage]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(THUMBNAIL_RATIO_STORAGE_KEY);
+      if (stored && THUMBNAIL_RATIOS.some((option) => option.value === stored)) {
+        setThumbnailRatio(stored);
+      }
+    } catch {
+      // localStorage 不可用时沿用默认比例
+    }
+  }, []);
+
+  const handleThumbnailRatioChange = (value: string) => {
+    setThumbnailRatio(value);
+    try {
+      window.localStorage.setItem(THUMBNAIL_RATIO_STORAGE_KEY, value);
+    } catch {
+      // 写入失败只影响下次打开时的记忆
+    }
+  };
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
   const [conversations, setConversations] = useState<ManagedImageConversation[]>([]);
@@ -97,6 +144,7 @@ function ImageManagerContent() {
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [deleteMode, setDeleteMode] = useState<"selected" | "byDate" | "byConversation" | null>(null);
   const [deleteConversationId, setDeleteConversationId] = useState("");
+  const [thumbnailRatio, setThumbnailRatio] = useState(DEFAULT_THUMBNAIL_RATIO);
   const [isDownloading, setIsDownloading] = useState(false);
 
   const filteredItems = selectedTags.length > 0
@@ -316,6 +364,23 @@ function ImageManagerContent() {
             onChange={setSelectedConversationId}
           />
           <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
+          <Select value={thumbnailRatio} onValueChange={handleThumbnailRatioChange}>
+            <SelectTrigger
+              className="h-10 w-[136px] rounded-xl border-stone-200 bg-white text-stone-700"
+              title="缩略图显示比例（保存在本机浏览器）"
+              aria-label="缩略图显示比例"
+            >
+              <span className="flex min-w-0 items-center gap-1.5 truncate">
+                <Maximize2 className="size-4 shrink-0 text-stone-400" />
+                <SelectValue />
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              {THUMBNAIL_RATIOS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700">
             清除筛选条件
           </Button>
@@ -551,7 +616,8 @@ function ImageManagerContent() {
                 <div className="relative">
                   <button
                     type="button"
-                    className="relative block aspect-square w-full cursor-zoom-in overflow-hidden rounded-lg bg-stone-100 text-left"
+                    style={{ aspectRatio: resolveThumbnailAspect(item, thumbnailRatio) }}
+                    className="relative block w-full cursor-zoom-in overflow-hidden rounded-lg bg-stone-100 text-left"
                     onClick={() => {
                       setLightboxIndex(imageIndex);
                       setLightboxOpen(true);
@@ -560,7 +626,7 @@ function ImageManagerContent() {
                     <img
                       src={item.thumbnail_url || item.url}
                       alt={item.name}
-                      className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                      className="h-full w-full object-contain transition group-hover:scale-[1.02]"
                       onError={(event) => {
                         if (event.currentTarget.src !== item.url) {
                           event.currentTarget.src = item.url;

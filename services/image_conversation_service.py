@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from datetime import datetime, timezone
@@ -52,6 +53,7 @@ class ImageConversationService:
     """按登录身份持久化图片会话（含多轮、参考图/蒙版与结果引用）。
 
     历史归属维度是调用者身份（`owner_id`），与号池账号无关；每个身份只能读到自己的会话。
+    每个会话单独存一个文件，更新某个会话时不再重写全部会话。
     """
 
     def __init__(self, path: Path):
@@ -60,6 +62,11 @@ class ImageConversationService:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             self._items = self._load_locked()
+
+    @property
+    def directory(self) -> Path:
+        """会话文件目录，与历史单文件同名（去掉后缀）。"""
+        return self.path.with_suffix("")
 
     def list_conversations(self, identity: dict[str, object]) -> dict[str, Any]:
         owner = _owner_id(identity)
@@ -133,8 +140,8 @@ class ImageConversationService:
                 if current is not None and _timestamp(current.get("updatedAt")) > _timestamp(incoming.get("updatedAt")):
                     continue
                 self._items[key] = incoming
+                self._write_item_locked(key, incoming)
                 saved += 1
-            self._save_locked()
         return {"ok": True, "count": saved}
 
     def rename_conversation(self, identity: dict[str, object], conversation_id: str, title: str) -> dict[str, Any]:
@@ -145,7 +152,7 @@ class ImageConversationService:
             if current is not None:
                 current["title"] = _clean(title)
                 current["updatedAt"] = _now_iso()
-                self._save_locked()
+                self._write_item_locked(key, current)
         return {"ok": True}
 
     def delete_conversation(self, identity: dict[str, object], conversation_id: str) -> dict[str, Any]:
@@ -153,7 +160,7 @@ class ImageConversationService:
         key = _conversation_key(owner, _clean(conversation_id))
         with self._lock:
             if self._items.pop(key, None) is not None:
-                self._save_locked()
+                self._delete_item_file_locked(key)
         return {"ok": True}
 
     def clear_conversations(self, identity: dict[str, object]) -> dict[str, Any]:
@@ -162,8 +169,7 @@ class ImageConversationService:
             owned_keys = [key for key, item in self._items.items() if item.get("owner_id") == owner]
             for key in owned_keys:
                 self._items.pop(key, None)
-            if owned_keys:
-                self._save_locked()
+                self._delete_item_file_locked(key)
         return {"ok": True}
 
     @staticmethod
@@ -194,6 +200,17 @@ class ImageConversationService:
         return {key: value for key, value in item.items() if key != "owner_id"}
 
     def _load_locked(self) -> dict[str, dict[str, Any]]:
+        items = self._migrate_legacy_locked()
+        directory = self.directory
+        if directory.is_dir():
+            for file in directory.glob("*.json"):
+                item = self._read_item_file(file)
+                if item is not None:
+                    items[_conversation_key(item["owner_id"], item["id"])] = item
+        return items
+
+    def _migrate_legacy_locked(self) -> dict[str, dict[str, Any]]:
+        """把历史单文件拆成每会话一个文件；拆完把原文件改名留存，便于回退。"""
         if not self.path.exists():
             return {}
         try:
@@ -211,25 +228,49 @@ class ImageConversationService:
             owner = _clean(item.get("owner_id"))
             if not conversation_id or not owner:
                 continue
-            items[_conversation_key(owner, conversation_id)] = {
-                **item,
-                "id": conversation_id,
-                "owner_id": owner,
-            }
+            normalized = {**item, "id": conversation_id, "owner_id": owner}
+            key = _conversation_key(owner, conversation_id)
+            items[key] = normalized
+            self._write_item_locked(key, normalized)
+        try:
+            self.path.replace(self.path.with_suffix(self.path.suffix + ".migrated"))
+        except OSError:
+            pass
         return items
 
-    def _save_locked(self) -> None:
-        items = sorted(
-            self._items.values(),
-            key=lambda item: _timestamp(item.get("updatedAt")),
-            reverse=True,
-        )
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
+    @staticmethod
+    def _read_item_file(file: Path) -> dict[str, Any] | None:
+        try:
+            raw = json.loads(file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        conversation_id = _clean(raw.get("id"))
+        owner = _clean(raw.get("owner_id"))
+        if not conversation_id or not owner:
+            return None
+        return {**raw, "id": conversation_id, "owner_id": owner}
+
+    def _item_file(self, key: str) -> Path:
+        return self.directory / f"{hashlib.sha1(key.encode('utf-8')).hexdigest()}.json"
+
+    def _write_item_locked(self, key: str, item: dict[str, Any]) -> None:
+        directory = self.directory
+        directory.mkdir(parents=True, exist_ok=True)
+        target = self._item_file(key)
+        tmp_path = target.with_suffix(target.suffix + ".tmp")
         tmp_path.write_text(
-            json.dumps({"conversations": items}, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(item, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        tmp_path.replace(self.path)
+        tmp_path.replace(target)
+
+    def _delete_item_file_locked(self, key: str) -> None:
+        try:
+            self._item_file(key).unlink()
+        except OSError:
+            pass
 
 
 image_conversation_service = ImageConversationService(DATA_DIR / "image_conversations.json")

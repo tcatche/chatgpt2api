@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -154,6 +155,45 @@ class ImageConversationServiceTests(unittest.TestCase):
             self.assertEqual([item["id"] for item in items], ["c1"])
             full = reloaded.get_conversation(OWNER, "c1")
             self.assertEqual(full["turns"][0]["images"][0]["url"], "/images/a.png")
+
+    def test_each_conversation_is_stored_in_its_own_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "image_conversations.json"
+            service = self.make_service(path)
+            service.save_conversations(
+                OWNER,
+                [
+                    conversation("c1", "2026-10-13T01:00:00.000Z"),
+                    conversation("c2", "2026-10-13T02:00:00.000Z"),
+                ],
+            )
+
+            files = sorted((Path(tmp) / "image_conversations").glob("*.json"))
+            self.assertEqual(len(files), 2)
+
+            service.delete_conversation(OWNER, "c1")
+            self.assertEqual(len(sorted((Path(tmp) / "image_conversations").glob("*.json"))), 1)
+
+    def test_legacy_single_file_is_migrated_on_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "image_conversations.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "conversations": [
+                            {"id": "c1", "owner_id": "owner-1", "title": "旧会话", "turns": []},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            service = self.make_service(path)
+
+            self.assertEqual([item["id"] for item in service.list_conversations(OWNER)["items"]], ["c1"])
+            self.assertTrue(path.with_suffix(".json.migrated").exists())
+            self.assertEqual(len(sorted((Path(tmp) / "image_conversations").glob("*.json"))), 1)
 
 
 if __name__ == "__main__":

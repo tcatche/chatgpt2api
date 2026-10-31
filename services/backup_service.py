@@ -637,6 +637,11 @@ class BackupService:
                     DATA_DIR / "image_conversations.json",
                     "data/image_conversations.json",
                 )
+                self._add_directory_to_archive(
+                    archive,
+                    DATA_DIR / "image_conversations",
+                    "data/image_conversations",
+                )
             if include.get("accounts_snapshot"):
                 self._add_bytes_to_archive(
                     archive,

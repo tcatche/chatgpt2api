@@ -18,7 +18,8 @@ from services.image_storage_service import IMAGE_EXTENSIONS, image_storage_servi
 from services.image_tags_service import load_tags, remove_tags
 from utils.log import logger
 
-THUMBNAIL_SIZE = (320, 320)
+THUMBNAIL_SIZE = (480, 480)
+THUMBNAIL_WEBP_QUALITY = 80
 UNLINKED_CONVERSATION_ID = "__unlinked__"
 
 
@@ -71,7 +72,16 @@ def get_image_response(relative_path: str) -> FileResponse | Response:
 
 def _thumbnail_path(relative_path: str) -> Path:
     rel = _safe_relative_path(relative_path)
-    return config.image_thumbnails_dir / f"{rel}.png"
+    return config.image_thumbnails_dir / f"{rel}.webp"
+
+
+def _legacy_thumbnail_paths(relative_path: str) -> tuple[Path, Path]:
+    """历史缩略图位置：`<rel>.png` 与更早的 `<rel>`，只用于清理。"""
+    rel = _safe_relative_path(relative_path)
+    return (
+        config.image_thumbnails_dir / f"{rel}.png",
+        config.image_thumbnails_dir / rel,
+    )
 
 
 def thumbnail_url(base_url: str, relative_path: str) -> str:
@@ -104,7 +114,7 @@ def ensure_thumbnail(relative_path: str) -> Path:
             if image.mode not in {"RGB", "RGBA"}:
                 image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
             image.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            image.save(target, format="PNG", optimize=True)
+            image.save(target, format="WEBP", quality=THUMBNAIL_WEBP_QUALITY, method=4)
     except HTTPException:
         raise
     except Exception as exc:
@@ -150,7 +160,8 @@ def cleanup_image_thumbnails() -> int:
         if not path.is_file():
             continue
         rel = path.relative_to(thumbnails_root).as_posix()
-        if not rel.endswith(".png") or not image_storage_service.exists(rel[:-4]):
+        # 只保留当前格式（<rel>.webp）且源图仍存在的缩略图，历史 .png / 无后缀文件一并清掉
+        if not rel.endswith(".webp") or not image_storage_service.exists(rel[:-5]):
             path.unlink()
             removed += 1
     _cleanup_empty_dirs(thumbnails_root)
@@ -289,7 +300,7 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
             continue
         if image_storage_service.delete(item):
             removed += 1
-        for thumbnail in (_thumbnail_path(item), config.image_thumbnails_dir / _safe_relative_path(item)):
+        for thumbnail in (_thumbnail_path(item), *_legacy_thumbnail_paths(item)):
             if thumbnail.is_file():
                 thumbnail.unlink()
         remove_tags(item)
@@ -402,7 +413,7 @@ def delete_to_target(target_free_mb: int, dry_run: bool = False) -> dict:
         size = p.stat().st_size
         if not dry_run:
             rel = p.relative_to(config.images_dir).as_posix()
-            for tp in (_thumbnail_path(rel), config.image_thumbnails_dir / _safe_relative_path(rel)):
+            for tp in (_thumbnail_path(rel), *_legacy_thumbnail_paths(rel)):
                 if tp.is_file():
                     tp.unlink()
             remove_tags(rel)

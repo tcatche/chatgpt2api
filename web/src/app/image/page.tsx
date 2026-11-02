@@ -102,6 +102,9 @@ function parseImageSize(size: string) {
 const activeConversationQueueIds = new Set<string>();
 let pollAbortController: AbortController | null = null;
 
+// 批量重新生成产生的轮次带此前缀，便于「撤销上次批量」精确清理
+const BATCH_REGENERATE_ID_PREFIX = "batch-regen-";
+
 // 任务状态轮询：正常 2 秒一次；连续失败后降频重试，避免一次网关抖动就把整批任务判死。
 const TASK_POLL_INTERVAL_MS = 2000;
 const TASK_POLL_SLOW_RETRY_AFTER = 10;
@@ -1802,7 +1805,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
       const now = new Date().toISOString();
       const nextTurns: ImageTurn[] = sourceTurns.map((sourceTurn) => {
-        const nextTurnId = createId();
+        const nextTurnId = `${BATCH_REGENERATE_ID_PREFIX}${createId()}`;
         const count = Math.max(1, sourceTurn.count || sourceTurn.images.length || 1);
         return {
           id: nextTurnId,
@@ -1838,6 +1841,39 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       toast.success(`已加入 ${nextTurns.length} 个重新生成任务`);
     },
     [runConversationQueue],
+  );
+
+  const handleBatchUndo = useCallback(
+    async (conversationId: string) => {
+      const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
+      if (!conversation) {
+        return;
+      }
+      // 只清理批量重新生成留下、且已经结束的轮次；仍在排队或运行的留着，避免丢任务
+      const removable = new Set(
+        conversation.turns
+          .filter(
+            (turn) =>
+              turn.id.startsWith(BATCH_REGENERATE_ID_PREFIX) &&
+              turn.status !== "queued" &&
+              turn.status !== "generating",
+          )
+          .map((turn) => turn.id),
+      );
+      if (removable.size === 0) {
+        toast.message("没有可撤销的批量重新生成记录");
+        return;
+      }
+      const now = new Date().toISOString();
+      const nextConversation = {
+        ...conversation,
+        updatedAt: now,
+        turns: conversation.turns.filter((turn) => !removable.has(turn.id)),
+      };
+      await persistConversation(nextConversation);
+      toast.success(`已移除 ${removable.size} 条批量重新生成记录`);
+    },
+    [persistConversation],
   );
 
   const handleRetryImage = useCallback(
@@ -2251,6 +2287,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   onReuseTurnConfig={handleReuseTurnConfig}
                   onRegenerateTurn={handleRegenerateTurn}
                   onBatchRegenerate={handleBatchRegenerate}
+                  onBatchUndo={handleBatchUndo}
                   onRetryImage={handleRetryImage}
                   onTimeoutRetryContinue={handleTimeoutRetryContinue}
                   onDismissErrors={handleDismissErrors}

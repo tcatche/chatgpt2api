@@ -1,11 +1,12 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Brush, Clock3, Download, EyeOff, Layers, LoaderCircle, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { Brush, ChevronDown, Clock3, Download, EyeOff, Layers, LoaderCircle, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { getImmediateCachedImageSource, resolveCachedImage } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,7 @@ type ImageResultsProps = {
   onReuseTurnConfig: (conversationId: string, turnId: string) => void | Promise<void>;
   onRegenerateTurn: (conversationId: string, turnId: string) => void | Promise<void>;
   onBatchRegenerate: (conversationId: string, turnIds: string[]) => void | Promise<void>;
+  onBatchUndo: (conversationId: string) => void | Promise<void>;
   onRetryImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
   onTimeoutRetryContinue: (taskId: string) => void | Promise<void>;
   onDismissErrors: (conversationId: string, turnId: string) => void | Promise<void>;
@@ -141,6 +143,7 @@ export function ImageResults({
   onReuseTurnConfig,
   onRegenerateTurn,
   onBatchRegenerate,
+  onBatchUndo,
   onRetryImage,
   onTimeoutRetryContinue,
   onDismissErrors,
@@ -205,6 +208,14 @@ export function ImageResults({
     }
   };
 
+  const handleExport = (option: ImageExportOption) => {
+    if (!selectedConversation) {
+      return;
+    }
+    const { filename, content, mime } = option.build(selectedConversation);
+    downloadTextFile(filename, content, mime);
+  };
+
   if (!selectedConversation) {
     return (
       <div className="flex h-full min-h-[260px] items-center justify-center text-center sm:min-h-[420px]">
@@ -234,20 +245,60 @@ export function ImageResults({
     <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 sm:gap-8">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200/70 pb-3 dark:border-white/10">
         <span className="text-xs text-stone-500">共 {selectedConversation.turns.length} 轮</span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 rounded-full border-stone-200 bg-white px-3 text-stone-700 hover:bg-stone-50"
-          onClick={() => {
-            setBatchSelection([]);
-            setBatchOpen(true);
-          }}
-          disabled={regenerableIds.length === 0}
-        >
-          <Layers className="size-3.5" />
-          批量重新生成
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-full border-stone-200 bg-white px-3 text-stone-700 hover:bg-stone-50"
+              >
+                <Download className="size-3.5" />
+                导出
+                <ChevronDown className="size-3 opacity-60" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-1.5">
+              {EXPORT_OPTIONS.map((option) => {
+                const count = option.count(selectedConversation);
+                const disabled = count === 0;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => handleExport(option)}
+                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+                  >
+                    <span className="mt-0.5 text-stone-400">{option.icon}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-medium text-stone-800">
+                        {option.label}
+                        {disabled ? null : <span className="ml-1 text-stone-400">（{count}）</span>}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-stone-400">{option.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </PopoverContent>
+          </Popover>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-full border-stone-200 bg-white px-3 text-stone-700 hover:bg-stone-50"
+            onClick={() => {
+              setBatchSelection([]);
+              setBatchOpen(true);
+            }}
+            disabled={regenerableIds.length === 0}
+          >
+            <Layers className="size-3.5" />
+            批量重新生成
+          </Button>
+        </div>
       </div>
       {selectedConversation.turns.map((turn, turnIndex) => {
         const referenceLightboxImages = buildTurnLightboxImages(turn, "references");
@@ -258,32 +309,35 @@ export function ImageResults({
             {!turn.promptDeleted ? (
               <div className="flex justify-end">
                 <div className="max-w-[90%] px-1 py-1 text-[14px] leading-6 text-stone-900 sm:max-w-[82%] sm:text-[15px] sm:leading-7">
-                  <div className="mb-1.5 flex flex-wrap justify-end gap-2 text-[11px] text-stone-400 sm:mb-2">
+                  <div className="mb-1.5 flex flex-wrap items-center justify-end gap-2 text-[11px] text-stone-400 sm:mb-2">
                     <span>第 {turnIndex + 1} 轮</span>
                     <span>
                       {turn.mode === "edit" ? "编辑图" : "文生图"}
                     </span>
                     <span>{getTurnStatusLabel(turn.status)}</span>
                     <span>{formatConversationTime(turn.createdAt)}</span>
+                    <span className="flex items-center gap-1.5 text-stone-500">
+                      <button
+                        type="button"
+                        onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
+                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-200 hover:text-stone-900"
+                      >
+                        <Sparkles className="size-3" />
+                        <span className="hidden sm:inline">复用配置</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeletePrompt(selectedConversation.id, turn.id)}
+                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
+                        aria-label="删除提示词记录"
+                        title="删除提示词记录"
+                      >
+                        <Trash2 className="size-3" />
+                        <span className="hidden sm:inline">删除提示</span>
+                      </button>
+                    </span>
                   </div>
                   <div className="text-right">{turn.prompt}</div>
-                  <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
-                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-200 hover:text-stone-900"
-                    >
-                      复用配置
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeletePrompt(selectedConversation.id, turn.id)}
-                      className="inline-flex size-6 items-center justify-center rounded-full text-stone-300 transition hover:bg-rose-50 hover:text-rose-500"
-                      aria-label="删除提示词记录"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
-                  </div>
                 </div>
               </div>
             ) : null}
@@ -348,6 +402,26 @@ export function ImageResults({
                     {turn.status === "queued" ? (
                       <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">等待当前对话中的前序任务完成</span>
                     ) : null}
+                    <span className="ml-auto flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void onRegenerateTurn(selectedConversation.id, turn.id)}
+                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-500 transition hover:bg-stone-200 hover:text-stone-900"
+                      >
+                        <RotateCcw className="size-3" />
+                        <span className="hidden sm:inline">全部重新生成</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteResults(selectedConversation.id, turn.id)}
+                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
+                        aria-label="删除生成结果"
+                        title="删除生成结果"
+                      >
+                        <Trash2 className="size-3" />
+                        <span className="hidden sm:inline">删除结果</span>
+                      </button>
+                    </span>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 sm:block sm:columns-2 sm:gap-4 sm:space-y-4 xl:columns-3">
@@ -532,25 +606,6 @@ export function ImageResults({
                       </button>
                     </div>
                   ) : null}
-
-                  <div className="mt-3 flex items-center gap-1.5 text-[11px] sm:mt-4">
-                    <button
-                      type="button"
-                      onClick={() => void onRegenerateTurn(selectedConversation.id, turn.id)}
-                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-500 transition hover:bg-stone-200 hover:text-stone-900"
-                    >
-                      <RotateCcw className="size-3" />
-                      全部重新生成
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteResults(selectedConversation.id, turn.id)}
-                      className="inline-flex size-6 items-center justify-center rounded-full text-stone-300 transition hover:bg-rose-50 hover:text-rose-500"
-                      aria-label="删除生成结果"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
-                  </div>
                 </div>
               </div>
             ) : null}
@@ -668,6 +723,20 @@ export function ImageResults({
             <span className="mr-auto text-xs text-stone-500">
               已选 {selectedTurns.length} 个任务 · 共 {selectedImageCount} 张图
             </span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+              title="删除本会话中由批量重新生成、且已结束的轮次，不会影响原有结果"
+              disabled={batchSubmitting}
+              onClick={() => {
+                void onBatchUndo(selectedConversation.id);
+                setBatchOpen(false);
+                setBatchSelection([]);
+              }}
+            >
+              撤销上次批量
+            </Button>
             <Button type="button" variant="ghost" onClick={() => setBatchOpen(false)}>
               取消
             </Button>
@@ -746,6 +815,146 @@ function formatBase64ImageSize(base64: string) {
 
 function formatImageDimensions(width: number, height: number) {
   return `${width} x ${height}`;
+}
+
+type ImageExportOption = {
+  key: string;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  count: (conversation: ImageConversation) => number;
+  build: (conversation: ImageConversation) => { filename: string; content: string; mime: string };
+};
+
+function conversationTurns(conversation: ImageConversation) {
+  // promptDeleted / resultsDeleted 只是隐藏展示，数据仍在，导出时照常包含
+  return conversation.turns;
+}
+
+function collectSuccessUrls(conversation: ImageConversation) {
+  const urls: string[] = [];
+  for (const turn of conversationTurns(conversation)) {
+    for (const image of turn.images) {
+      if (image.status === "success" && image.url) {
+        urls.push(image.url);
+      }
+    }
+  }
+  return Array.from(new Set(urls));
+}
+
+function collectFailedImages(conversation: ImageConversation) {
+  const failed: Array<Record<string, unknown>> = [];
+  conversationTurns(conversation).forEach((turn, turnIndex) => {
+    turn.images.forEach((image, imageIndex) => {
+      if (image.status === "error") {
+        failed.push({
+          conversation_id: conversation.id,
+          conversation_title: conversation.title,
+          turn_index: turnIndex + 1,
+          turn_id: turn.id,
+          image_index: imageIndex + 1,
+          image_id: image.id,
+          task_id: image.taskId,
+          error: image.error,
+          prompt: turn.prompt,
+          model: turn.model,
+          mode: turn.mode,
+          size: turn.size,
+          quality: turn.quality,
+          created_at: turn.createdAt,
+        });
+      }
+    });
+  });
+  return failed;
+}
+
+function collectFailedPrompts(conversation: ImageConversation) {
+  const prompts: string[] = [];
+  for (const turn of conversationTurns(conversation)) {
+    if (turn.prompt.trim() && turn.images.some((image) => image.status === "error")) {
+      prompts.push(turn.prompt.trim());
+    }
+  }
+  return Array.from(new Set(prompts));
+}
+
+function conversationFileStem(conversation: ImageConversation) {
+  const title = conversation.title.trim() || conversation.id;
+  return title.replace(/[\\/:*?"<>|]+/g, "_").slice(0, 40);
+}
+
+function fileTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function exportFilename(conversation: ImageConversation, suffix: string) {
+  return `${conversationFileStem(conversation)}-${fileTimestamp()}-${suffix}`;
+}
+
+const EXPORT_OPTIONS: ImageExportOption[] = [
+  {
+    key: "urls",
+    label: "导出图片地址",
+    description: "本会话全部成功图片的 URL，txt 一行一个",
+    icon: <Download className="size-3.5" />,
+    count: (conversation) => collectSuccessUrls(conversation).length,
+    build: (conversation) => ({
+      filename: exportFilename(conversation, "图片地址.txt"),
+      content: `${collectSuccessUrls(conversation).join("\n")}\n`,
+      mime: "text/plain",
+    }),
+  },
+  {
+    key: "conversation",
+    label: "导出会话文件",
+    description: "整个会话的 JSON，可用于备份或迁移",
+    icon: <Download className="size-3.5" />,
+    count: (conversation) => conversation.turns.length,
+    build: (conversation) => ({
+      filename: exportFilename(conversation, "会话.json"),
+      content: `${JSON.stringify(conversation, null, 2)}\n`,
+      mime: "application/json",
+    }),
+  },
+  {
+    key: "failed",
+    label: "导出失败任务",
+    description: "失败图片的 JSON，含错误原因与提示词",
+    icon: <Download className="size-3.5" />,
+    count: (conversation) => collectFailedImages(conversation).length,
+    build: (conversation) => ({
+      filename: exportFilename(conversation, "失败任务.json"),
+      content: `${JSON.stringify(collectFailedImages(conversation), null, 2)}\n`,
+      mime: "application/json",
+    }),
+  },
+  {
+    key: "failed-prompts",
+    label: "导出失败提示词",
+    description: "出现失败图片的提示词，txt 一行一条",
+    icon: <Download className="size-3.5" />,
+    count: (conversation) => collectFailedPrompts(conversation).length,
+    build: (conversation) => ({
+      filename: exportFilename(conversation, "失败提示词.txt"),
+      content: `${collectFailedPrompts(conversation).join("\n")}\n`,
+      mime: "text/plain",
+    }),
+  },
+];
+
+function downloadTextFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 const LazyImage = memo(function LazyImage({ src, alt, className, onLoad, onOpen }: {

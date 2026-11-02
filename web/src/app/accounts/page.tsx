@@ -223,6 +223,12 @@ function maskToken(token?: string) {
   return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
+function truncateEmail(email?: string | null) {
+  const value = (email ?? "").trim();
+  if (!value) return "";
+  return value.length <= 8 ? value : `${value.slice(0, 8)}…`;
+}
+
 function downloadTokens(accounts: Account[]) {
   const content = `${accounts.map((account) => account.access_token).join("\n")}\n`;
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -1128,11 +1134,10 @@ function AccountsPageContent() {
                         onCheckedChange={(checked) => toggleSelectAll(Boolean(checked))}
                       />
                     </th>
-                    <th className="w-56 px-4 py-3">token</th>
+                    <th className="w-64 px-4 py-3">账号 / Token</th>
                     <th className="w-28 px-4 py-3">类型</th>
                     <th className="w-24 px-4 py-3">来源</th>
                     <th className="w-24 px-4 py-3">状态</th>
-                    <th className="w-56 px-4 py-3">账号信息</th>
                     <th className="w-32 px-4 py-3">创建时间</th>
                     <th className="w-24 px-4 py-3">额度</th>
                     <th className="w-40 px-4 py-3">恢复时间</th>
@@ -1165,20 +1170,49 @@ function AccountsPageContent() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs leading-5 text-stone-600">
-                              {maskToken(account.access_token)}
-                            </span>
-                            <button
-                              type="button"
-                              className="rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(account.access_token);
-                                toast.success("token 已复制");
-                              }}
-                            >
-                              <Copy className="size-4" />
-                            </button>
+                          <div className="max-w-[16rem] space-y-0.5">
+                            <div className="flex items-center gap-1">
+                              <span
+                                className="truncate text-xs leading-5 text-stone-700"
+                                title={account.email || "（无邮箱）"}
+                              >
+                                {truncateEmail(account.email) || "—"}
+                              </span>
+                              <button
+                                type="button"
+                                className="rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 disabled:opacity-40"
+                                title={account.email ? `复制邮箱 ${account.email}` : "无邮箱可复制"}
+                                aria-label="复制邮箱"
+                                disabled={!account.email}
+                                onClick={() => {
+                                  if (!account.email) return;
+                                  void navigator.clipboard.writeText(account.email);
+                                  toast.success("邮箱已复制");
+                                }}
+                              >
+                                <Copy className="size-3.5" />
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span
+                                className="truncate font-mono text-[11px] leading-5 text-stone-400"
+                                title={account.access_token}
+                              >
+                                {maskToken(account.access_token)}
+                              </span>
+                              <button
+                                type="button"
+                                className="rounded-lg p-1 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
+                                title="复制 token"
+                                aria-label="复制 token"
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(account.access_token);
+                                  toast.success("token 已复制");
+                                }}
+                              >
+                                <Copy className="size-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -1206,9 +1240,6 @@ function AccountsPageContent() {
                           >
                             {account.status}
                           </Badge>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-xs leading-5 text-stone-500">{account.email ?? "—"}</div>
                         </td>
                         <td className="px-4 py-3 text-xs leading-5 text-stone-500">
                           {(() => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Copy, Download, ImageIcon, LoaderCircle, Maximize2, MessagesSquare, Plus, RefreshCw, Search, Star, Tag, Trash2, X } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, ImageIcon, LoaderCircle, Maximize2, MessagesSquare, Plus, RefreshCw, Search, Star, Tag, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConversationFilter, UNLINKED_CONVERSATION_ID, conversationDisplayLabel } from "@/app/image-manager/components/conversation-filter";
@@ -48,6 +48,29 @@ function resolveThumbnailAspect(item: ManagedImage, ratio: string) {
   // 原始比例模式下限制极端长宽，避免单张图把整行撑得过高
   const value = Math.min(MAX_THUMBNAIL_ASPECT, Math.max(MIN_THUMBNAIL_ASPECT, item.width / item.height));
   return String(value);
+}
+
+function fileTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function downloadUrlList(urls: string[], prefix: string) {
+  const unique = Array.from(new Set(urls.filter(Boolean)));
+  if (unique.length === 0) {
+    toast.message("当前筛选结果没有可导出的图片地址");
+    return;
+  }
+  const blob = new Blob([`${unique.join("\n")}\n`], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${prefix}-${fileTimestamp()}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  toast.success(`已导出 ${unique.length} 条图片地址`);
 }
 
 function formatSize(size: number) {
@@ -377,11 +400,11 @@ function ImageManagerContent() {
           <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
           <Select value={thumbnailRatio} onValueChange={handleThumbnailRatioChange}>
             <SelectTrigger
-              className="h-10 w-[136px] rounded-xl border-stone-200 bg-white text-stone-700"
+              className="h-10 w-auto min-w-[7.5rem] shrink-0 rounded-xl border-stone-200 bg-white text-stone-700"
               title="缩略图显示比例（保存在本机浏览器）"
               aria-label="缩略图显示比例"
             >
-              <span className="flex min-w-0 items-center gap-1.5 truncate">
+              <span className="flex items-center gap-1.5">
                 <Maximize2 className="size-4 shrink-0 text-stone-400" />
                 <SelectValue />
               </span>
@@ -405,43 +428,33 @@ function ImageManagerContent() {
       {/* 收藏分类常驻在标签行，即使还没有任何图片被收藏也能一键筛选 */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-stone-500">
-          <Star className="mr-1 inline size-3.5" />
-          收藏：
+          <Tag className="mr-1 inline size-3.5" />
+          标签筛选：
         </span>
-        <div className="inline-flex items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => toggleFilterTag(FAVORITE_TAG)}
-            className={cn(
-              "rounded-full px-3 py-1 text-xs font-medium transition",
-              selectedTags.includes(FAVORITE_TAG)
-                ? "bg-amber-500 text-white"
-                : "bg-amber-50 text-amber-700 hover:bg-amber-100",
-            )}
-          >
-            收藏
+        {/* 收藏常驻在最前，即使一张都没收藏也能一键筛选 */}
+        <span className="relative inline-flex items-center">
+          <button type="button" onClick={() => toggleFilterTag(FAVORITE_TAG)}>
+            <Badge
+              variant={selectedTags.includes(FAVORITE_TAG) ? "default" : "outline"}
+              className="cursor-pointer rounded-md border-amber-200 bg-amber-50 text-amber-700 transition-all hover:opacity-80"
+            >
+              <Star className={cn("mr-0.5 size-3", selectedTags.includes(FAVORITE_TAG) ? "fill-current" : "")} />
+              收藏
+            </Badge>
           </button>
           {allTags.includes(FAVORITE_TAG) ? (
             <button
               type="button"
               onClick={() => setTagDeleteTarget(FAVORITE_TAG)}
-              className="rounded-full p-1 text-amber-600/70 transition hover:bg-amber-100 hover:text-amber-700"
+              className="ml-0.5 rounded-full p-0.5 text-amber-500/70 transition hover:bg-amber-100 hover:text-amber-700"
               title="删除「收藏」分类（会清空所有收藏）"
               aria-label="删除收藏分类"
             >
               <X className="size-3" />
             </button>
           ) : null}
-        </div>
-      </div>
-
-      {allTags.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-stone-500">
-            <Tag className="mr-1 inline size-3.5" />
-            标签筛选：
-          </span>
-          {allTags.filter((tag) => tag !== FAVORITE_TAG).map((tag) => {
+        </span>
+        {allTags.filter((tag) => tag !== FAVORITE_TAG).map((tag) => {
             const isPressing = pressingTag === tag;
             return (
               <span
@@ -480,8 +493,7 @@ function ImageManagerContent() {
               </Badge>
             </button>
           ) : null}
-        </div>
-      ) : null}
+      </div>
 
       {/* Storage Stats Panel */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
@@ -523,6 +535,28 @@ function ImageManagerContent() {
                 onClick={() => { setDeleteConversationId(""); setDeleteMode("byConversation"); }}>
                 🗑️ 按会话删除
               </Button>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button size="sm" variant="outline" className="h-7 text-xs">
+                    <Download className="mr-1 size-3" />
+                    导出
+                    <ChevronDown className="ml-1 size-3 opacity-60" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-56 p-1">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-stone-700 transition hover:bg-stone-100"
+                    onClick={() => {
+                      const urls = filteredItems.flatMap((item) => (item.url ? [item.url] : []));
+                      downloadUrlList(urls, "图片管理-筛选结果");
+                    }}
+                  >
+                    <Download className="size-3.5 text-stone-400" />
+                    导出当前筛选 URL（{filteredItems.length}）
+                  </button>
+                </PopoverContent>
+              </Popover>
               <form onSubmit={async (e) => { e.preventDefault();
                 try {
                   const r = await deleteToTarget(targetFreeMb);
@@ -684,10 +718,10 @@ function ImageManagerContent() {
                   <button
                     type="button"
                     className={cn(
-                      "absolute top-2 left-2 z-10 inline-flex size-7 items-center justify-center rounded-full text-white transition",
+                      "absolute top-2 left-2 z-10 inline-flex size-7 items-center justify-center rounded-full text-white shadow-sm transition",
                       isFavorite(item)
                         ? "bg-amber-500 hover:bg-amber-600"
-                        : "bg-black/50 opacity-100 hover:bg-amber-500 sm:opacity-0 sm:group-hover:opacity-100",
+                        : "bg-black/45 hover:bg-amber-500",
                     )}
                     title={isFavorite(item) ? "取消收藏" : "收藏（加入「收藏」分类）"}
                     aria-label={isFavorite(item) ? "取消收藏" : "收藏"}

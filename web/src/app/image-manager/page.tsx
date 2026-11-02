@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Copy, Download, ImageIcon, LoaderCircle, Maximize2, MessagesSquare, Plus, RefreshCw, Search, Tag, Trash2, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Copy, Download, ImageIcon, LoaderCircle, Maximize2, MessagesSquare, Plus, RefreshCw, Search, Star, Tag, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConversationFilter, UNLINKED_CONVERSATION_ID, conversationDisplayLabel } from "@/app/image-manager/components/conversation-filter";
@@ -17,11 +17,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { compressAllImages, deleteImageTag, deleteManagedImages, deleteToTarget, downloadImages, downloadSingleImage, fetchImageStorage, fetchImageTags, fetchManagedImages, setImageTags, type ImageStorageStats, type ManagedImage, type ManagedImageConversation } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
+import { cn } from "@/lib/utils";
 
 const LONG_PRESS_MS = 800;
 const IMAGE_MANAGER_CHECKBOX_CLASS = "border-stone-300 bg-white/80 dark:border-white/35 dark:bg-white/5 data-[state=checked]:border-stone-950 dark:data-[state=checked]:border-white";
 
 // 缩略图显示比例：存在浏览器本地，只影响当前设备
+// 收藏用保留标签实现，不新增后端字段
+const FAVORITE_TAG = "收藏";
 const THUMBNAIL_RATIO_STORAGE_KEY = "chatgpt2api:image-manager:thumbnail-ratio";
 const DEFAULT_THUMBNAIL_RATIO = "9 / 16";
 const THUMBNAIL_RATIOS = [
@@ -249,6 +252,14 @@ function ImageManagerContent() {
     setPage(1);
   };
 
+  const isFavorite = (item: ManagedImage) => (item.tags ?? []).includes(FAVORITE_TAG);
+
+  const handleToggleFavorite = (item: ManagedImage) => {
+    const tags = item.tags ?? [];
+    const nextTags = isFavorite(item) ? tags.filter((tag) => tag !== FAVORITE_TAG) : [...tags, FAVORITE_TAG];
+    void handleSetTags(item, nextTags);
+  };
+
   const [pressingTag, setPressingTag] = useState<string | null>(null);
   const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
@@ -391,13 +402,46 @@ function ImageManagerContent() {
         </div>
       </div>
 
+      {/* 收藏分类常驻在标签行，即使还没有任何图片被收藏也能一键筛选 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-stone-500">
+          <Star className="mr-1 inline size-3.5" />
+          收藏：
+        </span>
+        <div className="inline-flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => toggleFilterTag(FAVORITE_TAG)}
+            className={cn(
+              "rounded-full px-3 py-1 text-xs font-medium transition",
+              selectedTags.includes(FAVORITE_TAG)
+                ? "bg-amber-500 text-white"
+                : "bg-amber-50 text-amber-700 hover:bg-amber-100",
+            )}
+          >
+            收藏
+          </button>
+          {allTags.includes(FAVORITE_TAG) ? (
+            <button
+              type="button"
+              onClick={() => setTagDeleteTarget(FAVORITE_TAG)}
+              className="rounded-full p-1 text-amber-600/70 transition hover:bg-amber-100 hover:text-amber-700"
+              title="删除「收藏」分类（会清空所有收藏）"
+              aria-label="删除收藏分类"
+            >
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       {allTags.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-stone-500">
             <Tag className="mr-1 inline size-3.5" />
             标签筛选：
           </span>
-          {allTags.map((tag) => {
+          {allTags.filter((tag) => tag !== FAVORITE_TAG).map((tag) => {
             const isPressing = pressingTag === tag;
             return (
               <span
@@ -636,6 +680,23 @@ function ImageManagerContent() {
                     <span className="absolute right-2 bottom-2 rounded-full bg-black/50 p-2 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
                       <Maximize2 className="size-4" />
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      "absolute top-2 left-2 z-10 inline-flex size-7 items-center justify-center rounded-full text-white transition",
+                      isFavorite(item)
+                        ? "bg-amber-500 hover:bg-amber-600"
+                        : "bg-black/50 opacity-100 hover:bg-amber-500 sm:opacity-0 sm:group-hover:opacity-100",
+                    )}
+                    title={isFavorite(item) ? "取消收藏" : "收藏（加入「收藏」分类）"}
+                    aria-label={isFavorite(item) ? "取消收藏" : "收藏"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleFavorite(item);
+                    }}
+                  >
+                    <Star className={cn("size-3.5", isFavorite(item) ? "fill-current" : "")} />
                   </button>
                   <button
                     type="button"

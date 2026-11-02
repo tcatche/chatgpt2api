@@ -5,6 +5,7 @@ import { ArrowDown, History, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
+import { ConversationToolbar } from "@/app/image/components/conversation-toolbar";
 import { ImageDrawingDialog } from "@/app/image/components/image-drawing-dialog";
 import { ImageResults, buildTurnLightboxImages, hasTurnLightboxImages, type ImageLightboxGroup, type ImageLightboxGroupKind, type ImageLightboxItem } from "@/app/image/components/image-results";
 import { ImageSidebar } from "@/app/image/components/image-sidebar";
@@ -1112,14 +1113,47 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(() => {
     if (!selectedConversationId) return;
+    // 优先跟随会话最近一轮用过的模型，其次才是会话级模型
+    const conversation = hydratedConversationsRef.current.get(selectedConversationId);
+    const latestTurnModel = conversation?.turns[conversation.turns.length - 1]?.model;
     const summary = conversationsRef.current.find((item) => item.id === selectedConversationId);
-    const conversationModel = summary && imageModels.includes(summary.model)
-      ? summary.model
-      : imageModels[0];
-    if (conversationModel) {
-      setImageModel(conversationModel);
+    const preferred = [latestTurnModel, summary?.model].find(
+      (model): model is ImageModel => Boolean(model && imageModels.includes(model)),
+    );
+    if (preferred) {
+      setImageModel(preferred);
     }
   }, [imageModels, selectedConversationId]);
+
+  // 切换会话时，用该会话最近一轮的参数回填输入区；新会话保持当前默认值
+  const lastAppliedTurnRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedConversationId) {
+      lastAppliedTurnRef.current = null;
+      return;
+    }
+    const conversation = hydratedConversationsRef.current.get(selectedConversationId);
+    const latestTurn = conversation?.turns[conversation.turns.length - 1];
+    if (!latestTurn) {
+      return;
+    }
+    if (lastAppliedTurnRef.current === latestTurn.id) {
+      return;
+    }
+    lastAppliedTurnRef.current = latestTurn.id;
+    setImageCount(String(Math.max(1, latestTurn.count || 1)));
+    setImageRatio(latestTurn.ratio || "1:1");
+    setImageTier(latestTurn.tier || "1k");
+    setImageQuality(latestTurn.quality || "auto");
+    const sizeMatch = /^(\d+)x(\d+)$/.exec(String(latestTurn.size || ""));
+    if (sizeMatch) {
+      setImageWidth(sizeMatch[1]);
+      setImageHeight(sizeMatch[2]);
+    }
+    if (latestTurn.model && imageModels.includes(latestTurn.model)) {
+      setImageModel(latestTurn.model);
+    }
+  }, [activeConversation, selectedConversationId, imageModels]);
 
   const handleConversationModelChange = useCallback(
     async (model: ImageModel) => {
@@ -2286,8 +2320,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   onDeleteResults={openDeleteResultsConfirm}
                   onReuseTurnConfig={handleReuseTurnConfig}
                   onRegenerateTurn={handleRegenerateTurn}
-                  onBatchRegenerate={handleBatchRegenerate}
-                  onBatchUndo={handleBatchUndo}
                   onRetryImage={handleRetryImage}
                   onTimeoutRetryContinue={handleTimeoutRetryContinue}
                   onDismissErrors={handleDismissErrors}
@@ -2337,6 +2369,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onReferenceImageChange={handleReferenceImageChange}
             onRemoveReferenceImage={handleRemoveReferenceImage}
             onOpenSketch={() => setDrawingDialog({ mode: "sketch" })}
+            conversationToolbar={<ConversationToolbar
+              conversation={selectedConversation}
+              onBatchRegenerate={handleBatchRegenerate}
+              onBatchUndo={handleBatchUndo}
+              formatConversationTime={formatConversationTime}
+            />}
           />
         </div>
       </section>

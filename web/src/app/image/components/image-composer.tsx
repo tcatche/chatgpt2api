@@ -39,6 +39,8 @@ type ImageComposerProps = {
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
   onRemoveReferenceImage: (index: number) => void;
   onOpenSketch: () => void;
+  /** 会话级操作：导出 / 批量重新生成 */
+  conversationToolbar?: React.ReactNode;
 };
 
 const imageFileNamePattern = /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/i;
@@ -112,6 +114,7 @@ export function ImageComposer({
   onReferenceImageChange,
   onRemoveReferenceImage,
   onOpenSketch,
+  conversationToolbar,
 }: ImageComposerProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -362,9 +365,11 @@ export function ImageComposer({
                     <Brush className="size-3.5 sm:size-4" />
                     <span className="hidden sm:inline">草图</span>
                   </Button>
-                  <div className="shrink-0 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
-                    <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
+                  <div className="flex shrink-0 items-baseline gap-1 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
+                    <span className="hidden sm:inline">剩余额度 </span>
+                    <span className="text-[11px] font-bold tabular-nums text-stone-900 sm:text-sm">{availableQuota}</span>
                   </div>
+                  {conversationToolbar}
                   {activeTaskCount > 0 && (
                     <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />

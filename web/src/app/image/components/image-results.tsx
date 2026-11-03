@@ -205,7 +205,9 @@ export function ImageResults({
                     <span>
                       {turn.mode === "edit" ? "编辑图" : "文生图"}
                     </span>
-                    <span>{getTurnStatusLabel(turn.status)}</span>
+                    <span className={cn(turn.status === "queued" && "font-medium text-amber-600")}>
+                      {getTurnStatusLabel(turn.status)}
+                    </span>
                     <span>{formatConversationTime(turn.createdAt)}</span>
                     <span className="flex items-center gap-1.5 text-stone-500">
                       <button
@@ -461,10 +463,14 @@ export function ImageResults({
                   <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 sm:mb-4 sm:gap-2 sm:text-xs">
                     <span className="rounded-full bg-stone-100 px-3 py-1">{turn.count} 张</span>
                     <span className="rounded-full bg-stone-100 px-3 py-1">{turn.model}</span>
-                    <span className="rounded-full bg-stone-100 px-3 py-1">{getTurnStatusLabel(turn.status)}</span>
-                    {turn.status === "queued" ? (
-                      <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">等待当前对话中的前序任务完成</span>
-                    ) : null}
+                    <span
+                      className={cn(
+                        "rounded-full px-3 py-1",
+                        turn.status === "queued" ? "bg-amber-50 text-amber-700" : "bg-stone-100",
+                      )}
+                    >
+                      {getTurnStatusLabel(turn.status)}
+                    </span>
                     <span className="ml-auto flex items-center gap-1.5">
                       <button
                         type="button"

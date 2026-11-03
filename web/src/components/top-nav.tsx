@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetClose, SheetContent, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import webConfig from "@/constants/common-env";
-import { fetchThirdPartyApps, type ThirdPartyAppsSettings } from "@/lib/api";
+import { fetchAccounts, fetchThirdPartyApps, type Account, type ThirdPartyAppsSettings } from "@/lib/api";
 import { getValidatedAuthSession } from "@/lib/auth-session";
 import { cn } from "@/lib/utils";
 import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
@@ -44,6 +44,7 @@ export function TopNav() {
   const [session, setSession] = useState<StoredAuthSession | null | undefined>(undefined);
   const [thirdPartyApps, setThirdPartyApps] = useState<ThirdPartyAppsSettings | null>(null);
   const [isCanvasDialogOpen, setIsCanvasDialogOpen] = useState(false);
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -97,6 +98,38 @@ export function TopNav() {
       window.removeEventListener("third-party-apps-updated", reload);
     };
   }, [session]);
+
+  // 号池管理右上角的额度角标：窗口聚焦或页面切换时刷新，不做高频轮询
+  useEffect(() => {
+    if (!session || session.role !== "admin") {
+      setAccounts(null);
+      return;
+    }
+    let active = true;
+    const load = async () => {
+      try {
+        const data = await fetchAccounts();
+        if (active) {
+          setAccounts(data.items);
+        }
+      } catch {
+        // 额度读取失败时保留上一次的数值
+      }
+    };
+    const handleFocus = () => void load();
+    void load();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [session]);
+
+  const availableQuota = accounts
+    ? accounts
+        .filter((account) => account.status !== "禁用")
+        .reduce((sum, account) => sum + Math.max(0, account.quota), 0)
+    : null;
 
   const handleLogout = async () => {
     await clearStoredAuthSession();
@@ -182,9 +215,17 @@ export function TopNav() {
             </Sheet>
             <Link
               href="/image"
-              className="shrink-0 py-1 text-[15px] font-bold tracking-tight text-stone-950 transition hover:text-stone-700 dark:text-stone-50 dark:hover:text-white"
+              className="relative shrink-0 py-1 text-[15px] font-bold tracking-tight text-stone-950 transition hover:text-stone-700 dark:text-stone-50 dark:hover:text-white"
             >
               chatgpt2api
+              {availableQuota !== null && availableQuota > 0 ? (
+                <span
+                  className="pointer-events-none absolute -top-0.5 left-full ml-0.5 rounded text-[10px] font-semibold leading-4 text-emerald-600 dark:text-emerald-400"
+                  title={`可用额度 ${availableQuota}`}
+                >
+                  {availableQuota}
+                </span>
+              ) : null}
             </Link>
             <HeaderActions className="ml-auto sm:hidden" showGithubText={false} />
           </div>

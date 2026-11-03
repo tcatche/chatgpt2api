@@ -20,13 +20,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
-  fetchAccounts,
   fetchImageModelCatalog,
   fetchImageTasks,
   resumeImagePoll,
   submitImageTaskBatch,
   uploadImageInput,
-  type Account,
   type ImageBatchTaskItem,
   type ImageModel,
   type ImageTask,
@@ -162,10 +160,6 @@ function formatConversationTime(value: string) {
   }).format(date);
 }
 
-function formatAvailableQuota(accounts: Account[]) {
-  const availableAccounts = accounts.filter((account) => account.status !== "禁用");
-  return String(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
-}
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -592,7 +586,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [isConversationLoading, setIsConversationLoading] = useState(false);
   const [pendingBatch, setPendingBatch] = useState<PendingBatch | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
   const [lightboxGroup, setLightboxGroup] = useState<{ turnId: string; kind: ImageLightboxGroupKind } | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -839,35 +832,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     };
   }, []);
 
-  const loadQuota = useCallback(async () => {
-    if (!isAdmin) {
-      setAvailableQuota("--");
-      return;
-    }
-    try {
-      const data = await fetchAccounts();
-      setAvailableQuota(formatAvailableQuota(data.items));
-    } catch {
-      setAvailableQuota((prev) => (prev === "加载中..." ? "--" : prev));
-    }
-  }, [isAdmin]);
-
-  useEffect(() => {
-    if (didLoadQuotaRef.current) {
-      return;
-    }
-    didLoadQuotaRef.current = true;
-
-    const handleFocus = () => {
-      void loadQuota();
-    };
-
-    void loadQuota();
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [isAdmin, loadQuota]);
 
   // 切换会话时保存旧会话滚动位置，并隐藏容器防止闪烁
   useLayoutEffect(() => {
@@ -1742,7 +1706,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           }
         }
 
-        await loadQuota();
       } catch (error) {
         const message = error instanceof Error ? error.message : "生成图片失败";
         await updateConversation(conversationId, (current) => {
@@ -1779,7 +1742,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       }
     },
-    [loadQuota, updateConversation],
+    [updateConversation],
   );
 
   const handleRegenerateTurn = useCallback(
@@ -2351,7 +2314,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             imageQuality={imageQuality}
             imageModel={imageModel}
             imageModels={imageModels}
-            availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
             referenceImages={referenceImages}
             maskImages={maskImages}

@@ -400,12 +400,12 @@ function ImageManagerContent() {
           <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
           <Select value={thumbnailRatio} onValueChange={handleThumbnailRatioChange}>
             <SelectTrigger
-              className="h-10 w-auto min-w-[7.5rem] shrink-0 rounded-xl border-stone-200 bg-white text-stone-700 [&>span]:line-clamp-none [&>span]:whitespace-nowrap"
+              className="h-10 w-[8.75rem] shrink-0 rounded-xl border-stone-200 bg-white text-stone-700 [&>span]:line-clamp-none [&>span]:whitespace-nowrap [&_[data-slot=select-value]]:whitespace-nowrap"
               title="缩略图显示比例（保存在本机浏览器）"
               aria-label="缩略图显示比例"
             >
-              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-                <Maximize2 className="size-4 shrink-0 text-stone-400" />
+              <span className="flex shrink-0 items-center whitespace-nowrap">
+                <Maximize2 className="inline size-4 shrink-0 text-stone-400" style={{ marginRight: "0.375rem" }} />
                 <SelectValue />
               </span>
             </SelectTrigger>

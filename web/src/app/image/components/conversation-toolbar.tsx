@@ -218,17 +218,17 @@ export function ConversationToolbar({
   };
 
   return (
-    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+    <div className={cn("flex flex-wrap items-center gap-1.5 text-[10px] sm:text-[11px]", className)}>
       <Popover>
         <PopoverTrigger asChild>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-9 shrink-0 rounded-full border-stone-200 bg-white px-2.5 text-xs text-stone-700 hover:bg-stone-50 sm:h-10 sm:px-3 sm:text-sm"
+            className="h-auto shrink-0 gap-1 rounded-full border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-600 shadow-none hover:bg-stone-50 sm:px-2.5 sm:py-1.5 sm:text-[11px]"
             title="导出本会话"
           >
-            <Download className="size-3.5 sm:size-4" />
+            <Download className="size-3" />
             <span className="hidden sm:inline">导出</span>
             <ChevronDown className="size-3 opacity-60" />
           </Button>
@@ -262,20 +262,15 @@ export function ConversationToolbar({
         type="button"
         variant="outline"
         size="sm"
-        className="h-9 shrink-0 rounded-full border-stone-200 bg-white px-2.5 text-xs text-stone-700 hover:bg-stone-50 sm:h-10 sm:px-3 sm:text-sm"
+        className="h-auto shrink-0 gap-1 rounded-full border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-600 shadow-none hover:bg-stone-50 sm:px-2.5 sm:py-1.5 sm:text-[11px]"
         title={regenerableIds.length === 0 ? "当前没有可重新生成的轮次（都还在生成中或没有提示词）" : "批量重新生成"}
         onClick={() => {
           setBatchSelection([]);
           setBatchOpen(true);
         }}
       >
-        <RotateCcw className="size-3.5 sm:size-4" />
+        <RotateCcw className="size-3" />
         <span className="hidden sm:inline">批量重新生成</span>
-        {regenerableIds.length > 0 ? (
-          <span className="ml-0.5 rounded-full bg-stone-100 px-1.5 text-[10px] font-semibold text-stone-600">
-            {regenerableIds.length}
-          </span>
-        ) : null}
       </Button>
 
       <Dialog

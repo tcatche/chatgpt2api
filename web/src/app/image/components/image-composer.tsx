@@ -323,7 +323,7 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="min-h-[82px] resize-none rounded-[24px] border-0 bg-transparent px-4 pt-4 pb-2 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 dark:text-stone-100 dark:placeholder:text-stone-500 sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:leading-7"
+              className="min-h-[76px] resize-none rounded-[24px] border-0 bg-transparent px-4 pt-3 pb-2 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 dark:text-stone-100 dark:placeholder:text-stone-500 sm:min-h-[124px] sm:rounded-[32px] sm:px-5 sm:pt-4 sm:pb-14 sm:leading-7"
             />
             {isDraggingImage ? (
               <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[24px] border-2 border-dashed border-stone-900 bg-white/85 text-sm font-medium text-stone-900 backdrop-blur-[1px] sm:rounded-[32px]">
@@ -334,11 +334,11 @@ export function ImageComposer({
               </div>
             ) : null}
 
-            <div className="rounded-b-[24px] border-t border-stone-100 bg-white px-3 pb-3 pt-2 dark:border-white/10 dark:bg-stone-950/95 sm:absolute sm:inset-x-0 sm:bottom-0 sm:rounded-b-none sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6 sm:dark:from-stone-950 sm:dark:via-stone-950/95 sm:dark:to-stone-950/0" onClick={(event) => event.stopPropagation()}>
-              <div className="flex items-end justify-between gap-2 sm:gap-3">
-                <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
+            <div className="rounded-b-[24px] border-t border-stone-100 bg-white px-3 pb-2.5 pt-2 dark:border-white/10 dark:bg-stone-950/95 sm:absolute sm:inset-x-0 sm:bottom-0 sm:rounded-b-none sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-5 sm:pb-2.5 sm:pt-3 sm:dark:from-stone-950 sm:dark:via-stone-950/95 sm:dark:to-stone-950/0" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-end justify-between gap-2 sm:gap-2.5">
+                <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0">
                   <label
-                    className="relative inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none transition hover:bg-stone-50 sm:h-10 sm:px-4 sm:text-sm"
+                    className="relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-1 overflow-hidden rounded-full border border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-600 shadow-none transition hover:bg-stone-50 sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-[11px]"
                     aria-label={referenceImages.length > 0 ? "添加参考图" : "上传"}
                   >
                     <input
@@ -352,35 +352,35 @@ export function ImageComposer({
                         void onReferenceImageChange(Array.from(event.target.files || []));
                       }}
                     />
-                    <ImagePlus className="pointer-events-none size-3.5 sm:size-4" />
+                    <ImagePlus className="pointer-events-none size-3 sm:size-3.5" />
                     <span className="pointer-events-none hidden sm:inline">{referenceImages.length > 0 ? "添加参考图" : "上传"}</span>
                   </label>
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-9 shrink-0 rounded-full border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none sm:h-10 sm:px-4 sm:text-sm"
+                    className="h-auto shrink-0 gap-1 rounded-full border-stone-200 bg-white px-2 py-1 text-[10px] font-medium text-stone-600 shadow-none hover:bg-stone-50 sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-[11px]"
                     onClick={onOpenSketch}
                     aria-label="绘制草图"
                   >
-                    <Brush className="size-3.5 sm:size-4" />
+                    <Brush className="size-3 sm:size-3.5" />
                     <span className="hidden sm:inline">草图</span>
                   </Button>
-                  <div className="flex shrink-0 items-baseline gap-1 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
+                  <div className="flex shrink-0 items-baseline gap-1 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-2.5 sm:py-1.5 sm:text-[11px]">
                     <span className="hidden sm:inline">剩余额度 </span>
-                    <span className="text-[11px] font-bold tabular-nums text-stone-900 sm:text-sm">{availableQuota}</span>
+                    <span className="text-[11px] font-bold tabular-nums text-stone-900 sm:text-xs">{availableQuota}</span>
                   </div>
                   {conversationToolbar}
                   {activeTaskCount > 0 && (
-                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
+                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-[11px]">
                       <LoaderCircle className="size-3 animate-spin" />
                       {activeTaskCount}<span className="hidden sm:inline"> 个任务处理中</span>
                     </div>
                   )}
-                  <div className="relative flex h-9 min-w-0 shrink items-center rounded-full bg-transparent text-[11px] sm:h-auto sm:shrink-0 sm:text-[13px]">
+                  <div className="relative flex h-7 min-w-0 shrink items-center rounded-full bg-transparent text-[11px] sm:h-auto sm:shrink-0 sm:text-xs">
                     <button
                       ref={sizeMenuBtnRef}
                       type="button"
-                      className="inline-flex h-9 w-fit max-w-[calc(100vw-12rem)] items-center justify-between gap-2 rounded-full bg-stone-100 px-4 text-left text-xs font-semibold text-stone-900 sm:h-10 sm:max-w-none sm:text-sm"
+                      className="inline-flex h-7 w-fit max-w-[calc(100vw-12rem)] items-center justify-between gap-1.5 rounded-full bg-stone-100 px-2.5 text-left text-[11px] font-semibold text-stone-900 sm:h-8 sm:max-w-none sm:px-3 sm:text-xs"
                       onClick={() => {
                         if (!isSizeMenuOpen && sizeMenuBtnRef.current) {
                           const rect = sizeMenuBtnRef.current.getBoundingClientRect();

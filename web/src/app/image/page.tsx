@@ -547,6 +547,8 @@ async function recoverConversationHistory(items: ImageConversation[]) {
 
 
 function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
+  // 提交节流：连点发送时忽略重复触发，避免并发创建多个会话
+  const submitLockRef = useRef(false);
   const didLoadQuotaRef = useRef(false);
   const conversationsRef = useRef<ImageConversationSummary[]>([]);
   const hydratedConversationsRef = useRef<Map<string, ImageConversation>>(new Map());
@@ -2073,6 +2075,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const handleSubmit = async () => {
+    // 提交节流：1.2 秒内重复点击直接忽略，避免并发创建多个会话
+    if (submitLockRef.current) {
+      return;
+    }
+    submitLockRef.current = true;
+    window.setTimeout(() => {
+      submitLockRef.current = false;
+    }, 1200);
     const prompt = imagePrompt.trim();
     if (!prompt) {
       toast.error("请输入提示词");

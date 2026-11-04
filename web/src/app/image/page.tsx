@@ -1097,6 +1097,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         return;
       }
       const nextConversation = updater(current);
+      // 轮询没有产生变化时直接返回，避免每 2 秒重复保存整份会话
+      if (nextConversation === current) {
+        return;
+      }
       applyHydratedConversation(nextConversation);
       if (options.persist !== false) {
         try {

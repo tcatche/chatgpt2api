@@ -755,6 +755,20 @@ export async function deleteImageTag(tag: string) {
   });
 }
 
+export async function lookupImageTags(urls: string[]) {
+  return httpRequest<{ items: Array<{ url: string; rel: string; tags: string[] }> }>("/api/images/tags/lookup", {
+    method: "POST",
+    body: { urls },
+  });
+}
+
+export async function setImageFavorite(url: string, favorite: boolean) {
+  return httpRequest<{ ok: boolean; rel: string; favorite: boolean; tags: string[] }>("/api/images/favorite", {
+    method: "POST",
+    body: { url, favorite },
+  });
+}
+
 export type ImageStorageStats = {
   disk_total_mb: number; disk_used_mb: number; disk_free_mb: number;
   image_count: number; image_size_mb: number; image_size_bytes: number;

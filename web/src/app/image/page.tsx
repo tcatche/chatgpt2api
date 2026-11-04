@@ -22,7 +22,9 @@ import { Button } from "@/components/ui/button";
 import {
   fetchImageModelCatalog,
   fetchImageTasks,
+  lookupImageTags,
   resumeImagePoll,
+  setImageFavorite,
   submitImageTaskBatch,
   uploadImageInput,
   type ImageBatchTaskItem,
@@ -58,6 +60,7 @@ const IMAGE_MODEL_STORAGE_KEY = "chatgpt2api:image_last_model";
 const IMAGE_COUNT_STORAGE_KEY = "chatgpt2api:image_last_count";
 const SCROLL_POSITIONS_STORAGE_KEY = "chatgpt2api:image_scroll_positions";
 const SCROLL_TO_LATEST_THRESHOLD = 160;
+const FAVORITE_TAG = "收藏";
 const FALLBACK_IMAGE_MODELS: ImageModel[] = [
   "gpt-image-2.5-sunburst",
   "gpt-image-2.5-flare",
@@ -608,6 +611,68 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const parsedCount = useMemo(() => Number(clampImageCount(imageCount)), [imageCount]);
   const selectedConversation = activeConversation;
+
+  // 收藏状态：图片 url -> 是否已收藏。进入会话时批量拉一次，之后本地维护
+  const [favoriteUrls, setFavoriteUrls] = useState<Record<string, boolean>>({});
+  const favoriteLoadedForRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const conversation = activeConversation;
+    if (!conversation) {
+      favoriteLoadedForRef.current = null;
+      setFavoriteUrls({});
+      return;
+    }
+    if (favoriteLoadedForRef.current === conversation.id) {
+      return;
+    }
+    favoriteLoadedForRef.current = conversation.id;
+    const urls = Array.from(
+      new Set(
+        conversation.turns.flatMap((turn) =>
+          turn.images.flatMap((image) => (image.status === "success" && image.url ? [image.url] : [])),
+        ),
+      ),
+    );
+    if (urls.length === 0) {
+      setFavoriteUrls({});
+      return;
+    }
+    let cancelled = false;
+    void lookupImageTags(urls)
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+        const next: Record<string, boolean> = {};
+        for (const item of data.items) {
+          next[item.url] = item.tags.includes(FAVORITE_TAG);
+        }
+        setFavoriteUrls(next);
+      })
+      .catch(() => {
+        // 标签读取失败不影响出图，星标保持未收藏状态
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversation]);
+
+  const handleToggleFavorite = useCallback(
+    async (url: string) => {
+      const current = favoriteUrls[url] ?? false;
+      const next = !current;
+      setFavoriteUrls((prev) => ({ ...prev, [url]: next }));
+      try {
+        const result = await setImageFavorite(url, next);
+        setFavoriteUrls((prev) => ({ ...prev, [url]: result.favorite }));
+      } catch (error) {
+        setFavoriteUrls((prev) => ({ ...prev, [url]: current }));
+        toast.error(error instanceof Error ? error.message : "收藏失败");
+      }
+    },
+    [favoriteUrls],
+  );
   const activeTaskCount = useMemo(
     () =>
       conversations.reduce(
@@ -2315,6 +2380,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   onRetryImage={handleRetryImage}
                   onTimeoutRetryContinue={handleTimeoutRetryContinue}
                   onDismissErrors={handleDismissErrors}
+                  favoriteUrls={favoriteUrls}
+                  onToggleFavorite={handleToggleFavorite}
                   formatConversationTime={formatConversationTime}
                 />
               )}

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from urllib.parse import urlsplit
-
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
@@ -10,6 +8,7 @@ from api.image_inputs import parse_image_edit_request, read_image_sources
 from api.support import require_identity, resolve_image_base_url
 from services.content_filter import check_request
 from services.config import config
+from services.image_tags_service import rel_from_public_url as _storage_rel_from_url
 from services.image_task_service import image_task_service
 from services.log_service import LoggedCall
 
@@ -43,31 +42,6 @@ class ResumePollRequest(BaseModel):
 
 def _parse_task_ids(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _storage_rel_from_url(value: str) -> str:
-    """把参考图 URL 还原成图片存储里的相对路径（兼容 WebDAV 公网地址与同源地址）。"""
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    text = text.split("?", 1)[0].split("#", 1)[0]
-    path = urlsplit(text).path
-    if not path:
-        return ""
-    public_base = str(config.get_image_storage_settings().get("public_base_url") or "").rstrip("/")
-    if public_base and text.startswith(public_base + "/"):
-        return text[len(public_base) + 1:].lstrip("/")
-    if public_base:
-        base_path = urlsplit(public_base).path.rstrip("/")
-        if base_path and path.startswith(base_path + "/"):
-            return path[len(base_path) + 1:].lstrip("/")
-    marker = "/images/"
-    index = path.find(marker)
-    if index >= 0:
-        return path[index + len(marker):].lstrip("/")
-    if path.startswith("images/"):
-        return path[len("images/"):]
-    return ""
 
 
 async def filter_or_log(call: LoggedCall, text: str) -> None:

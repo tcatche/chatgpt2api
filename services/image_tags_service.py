@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from services.config import DATA_DIR
+from services.config import DATA_DIR, config
 
 TAGS_FILE = DATA_DIR / "image_tags.json"
+FAVORITE_TAG = "收藏"
 
 
 def _ensure_file() -> None:
@@ -74,3 +76,34 @@ def get_all_tags() -> list[str]:
                 seen.add(t)
                 result.append(t)
     return result
+
+
+def get_tags_many(rels: list[str]) -> dict[str, list[str]]:
+    """批量读取多张图片的标签，只返回有标签的条目。"""
+    data = load_tags()
+    return {rel: data[rel] for rel in rels if rel in data}
+
+
+def rel_from_public_url(value: str) -> str:
+    """把图片 URL 还原成图片存储里的相对路径（兼容 WebDAV 公网地址与同源地址）。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.split("?", 1)[0].split("#", 1)[0]
+    path = urlsplit(text).path
+    if not path:
+        return ""
+    public_base = str(config.get_image_storage_settings().get("public_base_url") or "").rstrip("/")
+    if public_base and text.startswith(public_base + "/"):
+        return text[len(public_base) + 1:].lstrip("/")
+    if public_base:
+        base_path = urlsplit(public_base).path.rstrip("/")
+        if base_path and path.startswith(base_path + "/"):
+            return path[len(base_path) + 1:].lstrip("/")
+    marker = "/images/"
+    index = path.find(marker)
+    if index >= 0:
+        return path[index + len(marker):].lstrip("/")
+    if path.startswith("images/"):
+        return path[len("images/"):]
+    return ""

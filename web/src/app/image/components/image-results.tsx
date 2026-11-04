@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Brush, Clock3, Download, EyeOff, LoaderCircle, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { Brush, Clock3, Download, EyeOff, LoaderCircle, RotateCcw, Sparkles, Star, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
@@ -37,6 +37,8 @@ type ImageResultsProps = {
   onRetryImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
   onTimeoutRetryContinue: (taskId: string) => void | Promise<void>;
   onDismissErrors: (conversationId: string, turnId: string) => void | Promise<void>;
+  favoriteUrls: Record<string, boolean>;
+  onToggleFavorite: (url: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
 };
 
@@ -140,6 +142,8 @@ export function ImageResults({
   onRetryImage,
   onTimeoutRetryContinue,
   onDismissErrors,
+  favoriteUrls,
+  onToggleFavorite,
   formatConversationTime,
 }: ImageResultsProps) {
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -296,6 +300,8 @@ export function ImageResults({
                         const sizeLabel = image.b64_json ? formatBase64ImageSize(image.b64_json) : "";
                         const dimensions = imageDimensions.get(image.id);
                         const imageMeta = [sizeLabel, dimensions].filter(Boolean).join(" · ");
+                        const imageUrl = image.url || "";
+                        const favorited = imageUrl ? Boolean(favoriteUrls[imageUrl]) : false;
 
                         return (
                           <div
@@ -321,11 +327,28 @@ export function ImageResults({
                                 {image.durationMs != null ? <span className="whitespace-nowrap text-stone-400">{formatDuration(image.durationMs)}</span> : null}
                                 {imageMeta ? <span className="whitespace-nowrap text-stone-400">{imageMeta}</span> : null}
                               </div>
-                              <div data-slot="image-result-actions" className="flex items-center gap-1.5">
+                              <div data-slot="image-result-actions" className="flex items-center gap-1">
+                                {imageUrl ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={cn(
+                                      "h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] hover:bg-amber-50 sm:w-fit sm:px-2 sm:text-[11px]",
+                                      favorited ? "border-amber-200 text-amber-600" : "text-stone-700",
+                                    )}
+                                    onClick={() => void onToggleFavorite(imageUrl)}
+                                    title={favorited ? "取消收藏" : "收藏"}
+                                    aria-label={favorited ? "取消收藏" : "收藏"}
+                                    aria-pressed={favorited}
+                                  >
+                                    <Star className={cn("size-2.5 sm:size-3", favorited && "fill-amber-400 text-amber-500")} />
+                                    <span className="hidden sm:inline">{favorited ? "已收藏" : "收藏"}</span>
+                                  </Button>
+                                ) : null}
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2.5 sm:text-xs"
+                                  className="h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2 sm:text-[11px]"
                                   onClick={() => onAnnotateImage(
                                     selectedConversation.id,
                                     image,
@@ -334,29 +357,29 @@ export function ImageResults({
                                   title="编辑"
                                   aria-label="编辑"
                                 >
-                                  <Brush className="size-3 sm:size-3.5" />
+                                  <Brush className="size-2.5 sm:size-3" />
                                   <span className="hidden sm:inline">编辑</span>
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2.5 sm:text-xs"
+                                  className="h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2 sm:text-[11px]"
                                   onClick={() => onContinueEdit(selectedConversation.id, image)}
                                   title="引用"
                                   aria-label="引用"
                                 >
-                                  <Sparkles className="size-3 sm:size-3.5" />
+                                  <Sparkles className="size-2.5 sm:size-3" />
                                   <span className="hidden sm:inline">引用</span>
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2.5 sm:text-xs"
+                                  className="h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2 sm:text-[11px]"
                                   onClick={() => void downloadStoredImage(image, index)}
                                   title="下载"
                                   aria-label="下载"
                                 >
-                                  <Download className="size-3 sm:size-3.5" />
+                                  <Download className="size-2.5 sm:size-3" />
                                   <span className="hidden sm:inline">下载</span>
                                 </Button>
                               </div>

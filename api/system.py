@@ -23,7 +23,7 @@ from services.image_service import (
 )
 from services.image_model_service import get_image_model_catalog, refresh_image_model_catalog
 from services.image_storage_service import ImageStorageError, image_storage_service
-from services.image_tags_service import delete_tag, get_all_tags, set_tags
+from services.image_tags_service import FAVORITE_TAG, delete_tag, get_all_tags, get_tags, get_tags_many, rel_from_public_url, set_tags
 from services.log_service import log_service
 from services.proxy_service import proxy_settings, test_clearance, test_proxy
 
@@ -53,6 +53,13 @@ class ImageDownloadRequest(BaseModel):
 class ImageTagsRequest(BaseModel):
     path: str
     tags: list[str]
+
+class ImageTagsLookupRequest(BaseModel):
+    urls: list[str] = []
+
+class ImageFavoriteRequest(BaseModel):
+    url: str
+    favorite: bool = True
 
 class LogDeleteRequest(BaseModel):
     ids: list[str] = []
@@ -296,6 +303,29 @@ def create_router(app_version: str) -> APIRouter:
         require_admin(authorization)
         count = delete_tag(tag)
         return {"ok": True, "removed_from": count}
+
+    @router.post("/api/images/tags/lookup")
+    async def lookup_image_tags(body: ImageTagsLookupRequest, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        items = []
+        for url in body.urls[:2000]:
+            rel = rel_from_public_url(url)
+            if not rel:
+                continue
+            items.append({"url": url, "rel": rel, "tags": get_tags(rel)})
+        return {"items": items}
+
+    @router.post("/api/images/favorite")
+    async def toggle_image_favorite(body: ImageFavoriteRequest, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        rel = rel_from_public_url(body.url)
+        if not rel:
+            raise HTTPException(status_code=400, detail={"error": "url is required"})
+        tags = [t for t in get_tags(rel) if t != FAVORITE_TAG]
+        if body.favorite:
+            tags.append(FAVORITE_TAG)
+        tags = set_tags(rel, tags)
+        return {"ok": True, "rel": rel, "favorite": FAVORITE_TAG in tags, "tags": tags}
 
     @router.get("/api/images/storage")
     async def get_image_storage(authorization: str | None = Header(default=None)):

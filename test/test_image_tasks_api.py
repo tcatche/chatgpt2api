@@ -210,14 +210,14 @@ class ImageTasksApiTests(unittest.TestCase):
         self.assertEqual(items[0]["mode"], "edit")
         self.assertEqual(items[1]["mode"], "generate")
 
-    def test_create_batch_tasks_rejects_more_than_100(self):
+    def test_create_batch_tasks_rejects_more_than_200(self):
         response = self.client.post(
             "/api/image-tasks/batch",
             headers=AUTH_HEADERS,
             json={
                 "tasks": [
                     {"client_task_id": f"batch-{index}", "prompt": "cat"}
-                    for index in range(101)
+                    for index in range(201)
                 ]
             },
         )

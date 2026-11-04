@@ -1719,7 +1719,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             });
           }
         }
-        const batchSize = 100;
+        const batchSize = 200;
         for (let start = 0; start < items.length; start += batchSize) {
           const chunk = items.slice(start, start + batchSize);
           try {

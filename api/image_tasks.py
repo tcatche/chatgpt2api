@@ -33,7 +33,7 @@ class ImageBatchTaskItem(BaseModel):
 
 
 class ImageBatchTaskRequest(BaseModel):
-    tasks: list[ImageBatchTaskItem] = Field(..., min_length=1, max_length=100)
+    tasks: list[ImageBatchTaskItem] = Field(..., min_length=1, max_length=200)
 
 
 class ResumePollRequest(BaseModel):

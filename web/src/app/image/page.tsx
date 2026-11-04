@@ -1926,37 +1926,52 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [runConversationQueue],
   );
 
-  const handleBatchUndo = useCallback(
+  // 批量重跑失败图：只把 status=error 的单张结果换成 loading，成功的结果不动
+  const handleBatchRegenerateErrors = useCallback(
     async (conversationId: string) => {
       const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
       if (!conversation) {
         return;
       }
-      // 只清理批量重新生成留下、且已经结束的轮次；仍在排队或运行的留着，避免丢任务
-      const removable = new Set(
-        conversation.turns
-          .filter(
-            (turn) =>
-              turn.id.startsWith(BATCH_REGENERATE_ID_PREFIX) &&
-              turn.status !== "queued" &&
-              turn.status !== "generating",
-          )
-          .map((turn) => turn.id),
-      );
-      if (removable.size === 0) {
-        toast.message("没有可撤销的批量重新生成记录");
+      const now = new Date().toISOString();
+      const replacedUrls: string[] = [];
+      let replacedCount = 0;
+      const turns = conversation.turns.map((turn) => {
+        if (!turn.prompt.trim()) {
+          return turn;
+        }
+        let changed = false;
+        const images = turn.images.map((image) => {
+          if (image.status !== "error") {
+            return image;
+          }
+          changed = true;
+          replacedCount += 1;
+          if (image.url) {
+            replacedUrls.push(image.url);
+          }
+          const nextImageId = `${turn.id}-${createId()}`;
+          return { id: nextImageId, taskId: nextImageId, status: "loading" as const };
+        });
+        if (!changed) {
+          return turn;
+        }
+        const derived = deriveTurnStatus({ ...turn, status: "queued", images });
+        return { ...turn, ...derived, images };
+      });
+      if (replacedCount === 0) {
+        toast.message("没有需要重新生成的失败图片");
         return;
       }
-      const now = new Date().toISOString();
-      const nextConversation = {
-        ...conversation,
-        updatedAt: now,
-        turns: conversation.turns.filter((turn) => !removable.has(turn.id)),
-      };
-      await persistConversation(nextConversation);
-      toast.success(`已移除 ${removable.size} 条批量重新生成记录`);
+      shouldStickToBottomRef.current = true;
+      const btn = scrollToLatestBtnRef.current;
+      if (btn) btn.style.display = "none";
+      await persistConversation({ ...conversation, updatedAt: now, turns });
+      await deleteCachedImageSources(replacedUrls);
+      void runConversationQueue(conversationId);
+      toast.success(`已重新提交 ${replacedCount} 张失败图片`);
     },
-    [persistConversation],
+    [persistConversation, runConversationQueue],
   );
 
   const handleRetryImage = useCallback(
@@ -2430,7 +2445,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             conversationToolbar={<ConversationToolbar
               conversation={selectedConversation}
               onBatchRegenerate={handleBatchRegenerate}
-              onBatchUndo={handleBatchUndo}
+              onBatchRegenerateErrors={handleBatchRegenerateErrors}
               formatConversationTime={formatConversationTime}
             />}
           />

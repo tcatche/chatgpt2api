@@ -154,7 +154,7 @@ function turnStatusLabel(status: ImageTurn["status"]) {
 export type ConversationToolbarProps = {
   conversation: ImageConversation | null;
   onBatchRegenerate: (conversationId: string, turnIds: string[]) => void | Promise<void>;
-  onBatchUndo: (conversationId: string) => void | Promise<void>;
+  onBatchRegenerateErrors: (conversationId: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
   className?: string;
 };
@@ -162,7 +162,7 @@ export type ConversationToolbarProps = {
 export function ConversationToolbar({
   conversation,
   onBatchRegenerate,
-  onBatchUndo,
+  onBatchRegenerateErrors,
   formatConversationTime,
   className,
 }: ConversationToolbarProps) {
@@ -193,6 +193,12 @@ export function ConversationToolbar({
     (sum, turn) => sum + Math.max(1, turn.count || turn.images.length || 1),
     0,
   );
+  // 只统计「有提示词的轮次里失败的单张图」，用于批量重跑错误图
+  const errorImageCount = conversation.turns.reduce(
+    (sum, turn) =>
+      sum + (turn.prompt.trim() ? turn.images.filter((image) => image.status === "error").length : 0),
+    0,
+  );
 
   const toggleBatchTurn = (turnId: string, checked: boolean) => {
     setBatchSelection((current) =>
@@ -203,6 +209,18 @@ export function ConversationToolbar({
   const handleExport = (option: ExportOption) => {
     const { filename, content, mime } = option.build(conversation);
     downloadTextFile(filename, content, mime);
+  };
+
+  const handleBatchRegenerateErrors = async () => {
+    if (errorImageCount === 0) return;
+    setBatchSubmitting(true);
+    try {
+      await onBatchRegenerateErrors(conversation.id);
+      setBatchOpen(false);
+      setBatchSelection([]);
+    } finally {
+      setBatchSubmitting(false);
+    }
   };
 
   const handleBatchConfirm = async () => {
@@ -310,16 +328,6 @@ export function ConversationToolbar({
             >
               反选
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 rounded-full px-2.5 text-xs"
-              onClick={() => setBatchSelection(errorTurnIds)}
-              disabled={errorTurnIds.length === 0}
-            >
-              选中出错的轮次{errorTurnIds.length > 0 ? `（${errorTurnIds.length}）` : ""}
-            </Button>
             <button
               type="button"
               className="text-xs text-stone-400 transition hover:text-stone-700 disabled:opacity-50"
@@ -366,7 +374,7 @@ export function ConversationToolbar({
                       <span>{imageCount} 张</span>
                       <span>{formatConversationTime(turn.createdAt)}</span>
                     </span>
-                    <span className="mt-0.5 block truncate text-stone-700 dark:text-stone-200">
+                    <span className="mt-0.5 block truncate text-stone-700 dark:text-stone-200" title={turn.prompt || "（无提示词）"}>
                       {turn.prompt || "（无提示词）"}
                     </span>
                     {!eligible ? (
@@ -383,22 +391,17 @@ export function ConversationToolbar({
             <span className="mr-auto text-xs text-stone-500">
               已选 {selectedTurns.length} 个任务 · 共 {selectedImageCount} 张图
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-              title="删除本会话中由批量重新生成、且已结束的轮次，不会影响原有结果"
-              disabled={batchSubmitting}
-              onClick={() => {
-                void onBatchUndo(conversation.id);
-                setBatchOpen(false);
-                setBatchSelection([]);
-              }}
-            >
-              撤销上次批量
-            </Button>
             <Button type="button" variant="ghost" onClick={() => setBatchOpen(false)}>
               取消
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              title="只把失败的图片重新提交，已有的成功结果保持不变"
+              disabled={errorImageCount === 0 || batchSubmitting}
+              onClick={() => void handleBatchRegenerateErrors()}
+            >
+              重试出错图片{errorImageCount > 0 ? `（${errorImageCount}）` : ""}
             </Button>
             <Button
               type="button"

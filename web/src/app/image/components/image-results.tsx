@@ -230,7 +230,7 @@ export function ImageResults({
                       </button>
                     </span>
                   </div>
-                  <div className="whitespace-pre text-right">{turn.prompt}</div>
+                  <div className="whitespace-pre-line break-words text-right">{turn.prompt}</div>
                 </div>
               </div>
             ) : null}

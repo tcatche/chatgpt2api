@@ -1523,30 +1523,33 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const runConversationQueue = useCallback(
     async (conversationId: string) => {
+      // 同一会话只跑一个驱动循环；循环内部会持续吸收新加入的轮次
       if (activeConversationQueueIds.has(conversationId)) {
         return;
       }
 
+      const collectPendingTurns = (conversation: ImageConversation | null) =>
+        (conversation?.turns ?? []).filter(
+          (turn) =>
+            (turn.status === "queued" || turn.status === "generating") &&
+            turn.images.some((image) => image.status === "loading"),
+        );
+
       const snapshot = hydratedConversationsRef.current.get(conversationId) ?? null;
-      const pendingTurns = (snapshot?.turns ?? []).filter(
-        (turn) =>
-          (turn.status === "queued" || turn.status === "generating") &&
-          turn.images.some((image) => image.status === "loading"),
-      );
-      if (!snapshot || pendingTurns.length === 0) {
+      if (!snapshot || collectPendingTurns(snapshot).length === 0) {
         return;
       }
 
       activeConversationQueueIds.add(conversationId);
-      const pendingTurnIdSet = new Set(pendingTurns.map((turn) => turn.id));
       const applyTasks = async (tasks: ImageTask[]) => {
         const taskMap = new Map(tasks.map((task) => [task.id, task]));
+        if (taskMap.size === 0) {
+          return;
+        }
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
+          let conversationChanged = false;
           const turns = conversation.turns.map((turn) => {
-            if (!pendingTurnIdSet.has(turn.id)) {
-              return turn;
-            }
             let turnChanged = false;
             const images = turn.images.map((image) => {
               const taskId = image.taskId || image.id;
@@ -1560,6 +1563,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             if (!turnChanged) {
               return turn;
             }
+            conversationChanged = true;
             const derived = deriveTurnStatus({ ...turn, images });
             return {
               ...turn,
@@ -1567,6 +1571,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               images,
             };
           });
+          if (!conversationChanged) {
+            return conversation;
+          }
           return {
             ...conversation,
             updatedAt: new Date().toISOString(),
@@ -1582,9 +1589,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
           const turns = conversation.turns.map((turn) => {
-            if (!pendingTurnIdSet.has(turn.id)) {
-              return turn;
-            }
             let turnChanged = false;
             const images = turn.images.map((image) => {
               if (!taskIds.includes(image.taskId || image.id)) {
@@ -1607,7 +1611,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
       };
 
-      const submitPendingBatch = async (turns: ImageTurn[], missingTaskIds?: string[]) => {
+      const submitPendingBatch = async (missingTaskIds?: string[]) => {
+        // 每次都按最新会话重新计算待提交轮次，循环期间新加入的轮次会被一并提交
+        const turns = collectPendingTurns(hydratedConversationsRef.current.get(conversationId) ?? snapshot);
         const items: ImageBatchTaskItem[] = [];
         for (const turn of turns) {
           const images = turn.images.filter(
@@ -1662,16 +1668,32 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       };
 
       try {
-        await submitPendingBatch(pendingTurns);
-
         let consecutiveErrors = 0;
         let pollErrorNotified = false;
+        await submitPendingBatch();
+
         while (true) {
-          const latestConversation = hydratedConversationsRef.current.get(conversationId) ?? null;
-          const latestTurns = (latestConversation?.turns ?? []).filter((turn) => pendingTurnIdSet.has(turn.id));
+          // 每轮重新读取会话，循环期间新提交的轮次最迟在一个轮询周期内被接上
+          const pendingTurns = collectPendingTurns(
+            hydratedConversationsRef.current.get(conversationId) ?? null,
+          );
+          if (pendingTurns.length === 0) {
+            break;
+          }
+          // 还在 loading 却没有 taskId，说明尚未提交，先补提交再轮询
+          const hasUnsubmitted = pendingTurns.some((turn) =>
+            turn.images.some((image) => image.status === "loading" && !image.taskId),
+          );
+          if (hasUnsubmitted) {
+            await submitPendingBatch();
+          }
+          // 补提交会给图片写上 taskId，必须重新取一次快照
+          const pollTurns = hasUnsubmitted
+            ? collectPendingTurns(hydratedConversationsRef.current.get(conversationId) ?? null)
+            : pendingTurns;
           const loadingTaskIds = Array.from(
             new Set(
-              latestTurns.flatMap((turn) =>
+              pollTurns.flatMap((turn) =>
                 turn.images.flatMap((image) =>
                   image.status === "loading" && image.taskId ? [image.taskId] : [],
                 ),
@@ -1694,7 +1716,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               await applyTasks(taskList.items);
             }
             if (taskList.missing_ids.length > 0) {
-              await submitPendingBatch(latestTurns, taskList.missing_ids);
+              await submitPendingBatch(taskList.missing_ids);
             }
           } catch (pollError) {
             consecutiveErrors += 1;
@@ -1716,9 +1738,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             ...conversation,
             updatedAt: new Date().toISOString(),
             turns: conversation.turns.map((turn) => {
-              if (!pendingTurnIdSet.has(turn.id)) {
-                return turn;
-              }
               const images = turn.images.map((image) =>
                 image.status === "loading" ? { ...image, status: "error" as const, error: message } : image,
               );

@@ -233,6 +233,37 @@ class ImageTaskServiceTests(unittest.TestCase):
         self.assertEqual(task["error"], "检测到敏感词")
         self.assertEqual(called, [])
 
+    def test_progress_and_running_updates_skip_persist(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "image_tasks.json"
+
+            def handler(payload):
+                callback = payload.get("progress_callback")
+                if callback:
+                    for step in ("uploading", "bootstrapping", "generating"):
+                        callback(step)
+                return {"data": [{"url": "http://example.test/image.png"}]}
+
+            service = self.make_service(path, handler)
+            with mock.patch.object(
+                service, "_save_locked", wraps=service._save_locked
+            ) as save:
+                service.submit_batch(
+                    OWNER,
+                    items=[
+                        {
+                            "client_task_id": "progress-task",
+                            "mode": "generate",
+                            "prompt": "cat",
+                            "model": "gpt-image-2",
+                        }
+                    ],
+                    base_url="http://local.test",
+                )
+                wait_for_task(service, OWNER, "progress-task", "success")
+                # 入队写一次 + 终态写一次；running 与 3 次进度都不应落盘
+                self.assertEqual(save.call_count, 2)
+
     def test_batch_submit_writes_task_store_once(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "image_tasks.json"

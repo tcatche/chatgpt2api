@@ -24,6 +24,8 @@ TASK_STATUS_SUCCESS = "success"
 TASK_STATUS_ERROR = "error"
 TERMINAL_STATUSES = {TASK_STATUS_SUCCESS, TASK_STATUS_ERROR}
 UNFINISHED_STATUSES = {TASK_STATUS_QUEUED, TASK_STATUS_RUNNING}
+# 过期任务清理的最小间隔：轮询与提交都会触发，必须节流，否则每次请求都要扫全库
+CLEANUP_INTERVAL_SECS = 60.0
 
 
 def _now_iso() -> str:
@@ -139,6 +141,7 @@ class ImageTaskService:
         self.retention_days_getter = retention_days_getter or (lambda: config.image_retention_days)
         self._lock = threading.RLock()
         self._tasks: dict[str, dict[str, Any]] = {}
+        self._last_cleanup_ts = 0.0
         self._queue: queue.Queue[tuple[str, str, dict[str, Any], dict[str, object], str]] = queue.Queue()
         self._worker_lock = threading.Lock()
         self._workers: list[threading.Thread] = []
@@ -376,12 +379,12 @@ class ImageTaskService:
         model: str,
     ) -> None:
         started = time.time()
-        self._update_task(key, status=TASK_STATUS_RUNNING, error="")
+        self._update_task(key, persist=False, status=TASK_STATUS_RUNNING, error="")
         # 创建进度回调，每个步骤完成后更新任务状态
         def progress_callback(step: str) -> None:
             if step == "image_stream_resolve_start":
-                self._update_task(key, started_ts=time.time())
-            self._update_task(key, progress=step)
+                self._update_task(key, persist=False, started_ts=time.time())
+            self._update_task(key, persist=False, progress=step)
         # 将进度回调添加到 payload 中（handler 会提取并传递给 ConversationRequest）
         payload_with_progress = {**payload, "progress_callback": progress_callback}
         try:
@@ -483,7 +486,7 @@ class ImageTaskService:
         except Exception:
             pass
 
-    def _update_task(self, key: str, **updates: Any) -> None:
+    def _update_task(self, key: str, *, persist: bool = True, **updates: Any) -> None:
         with self._lock:
             task = self._tasks.get(key)
             if task is None:
@@ -491,7 +494,10 @@ class ImageTaskService:
             task.update(updates)
             task["updated_at"] = _now_iso()
             task["updated_ts"] = time.time()
-            self._save_locked()
+            # 进度、运行中等中间态不落盘：全量序列化整个任务库代价太高，
+            # 而重启时这些任务本来就会被标记为中断，丢了不影响正确性。
+            if persist:
+                self._save_locked()
 
     def _load_locked(self) -> dict[str, dict[str, Any]]:
         if not self.path.exists():
@@ -558,16 +564,26 @@ class ImageTaskService:
         return changed
 
     def _cleanup_locked(self) -> bool:
+        # 轮询、提交都会调用这里，按最小间隔节流，避免每次请求都扫全库
+        now = time.time()
+        if now - self._last_cleanup_ts < CLEANUP_INTERVAL_SECS:
+            return False
+        self._last_cleanup_ts = now
         try:
             retention_days = max(1, int(self.retention_days_getter()))
         except Exception:
             retention_days = 30
-        cutoff = time.time() - retention_days * 86400
-        removed_keys = [
-            key
-            for key, task in self._tasks.items()
-            if task.get("status") in TERMINAL_STATUSES and _timestamp(task.get("updated_at")) < cutoff
-        ]
+        cutoff = now - retention_days * 86400
+        removed_keys = []
+        for key, task in self._tasks.items():
+            if task.get("status") not in TERMINAL_STATUSES:
+                continue
+            # 优先用写入时就落下的数值时间戳，避免逐条解析日期字符串
+            updated_ts = task.get("updated_ts")
+            if not isinstance(updated_ts, (int, float)):
+                updated_ts = _timestamp(task.get("updated_at"))
+            if updated_ts < cutoff:
+                removed_keys.append(key)
         for key in removed_keys:
             self._tasks.pop(key, None)
         return bool(removed_keys)
@@ -596,7 +612,7 @@ class ImageTaskService:
             mode = task.get("mode", "generate")
             model = task.get("model", config.default_image_model)
             # 将任务状态重置为 running
-            self._update_task(key, status=TASK_STATUS_RUNNING, error="")
+        self._update_task(key, persist=False, status=TASK_STATUS_RUNNING, error="")
 
         # 启动新线程继续轮询
         thread = threading.Thread(

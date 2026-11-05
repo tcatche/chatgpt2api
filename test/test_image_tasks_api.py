@@ -177,6 +177,20 @@ class ImageTasksApiTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in payload["items"]], ["task-1"])
         self.assertEqual(payload["missing_ids"], ["missing"])
 
+    def test_query_tasks_accepts_ids_in_body(self):
+        long_ids = [f"{i}-" + "x" * 60 for i in range(150)]
+        response = self.client.post(
+            "/api/image-tasks/query",
+            headers=AUTH_HEADERS,
+            json={"ids": long_ids},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        # 请求体传 id 不受 URL 长度限制，150 条都要原样交给服务
+        self.assertEqual([item["id"] for item in payload["items"]], long_ids)
+        self.assertEqual(payload["missing_ids"], [])
+
     def test_create_batch_tasks_parses_reference_urls(self):
         response = self.client.post(
             "/api/image-tasks/batch",

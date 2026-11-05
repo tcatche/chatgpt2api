@@ -568,17 +568,16 @@ export async function createImageEditTask(
   });
 }
 
-// 任务状态查询把 ID 拼在 query 里：任务一多 URL 就会超过网关的请求行上限（nginx 默认 8KB），
-// 表现为 Cloudflare 520。这里按固定分片查询再合并，单个 URL 控制在 3KB 左右。
-const IMAGE_TASK_QUERY_CHUNK_SIZE = 100;
+// 任务 id 会随「批量重生成 + 重试出错」变得越来越长（单条约 55~70 字符）。
+// 拼在 query 里时 100 条就接近 7KB，加上认证头会顶到网关请求行上限，表现为 Cloudflare 520，
+// 所以改成 POST 用请求体传，彻底不再受 URL 长度限制。
+const IMAGE_TASK_QUERY_CHUNK_SIZE = 200;
 
 function fetchImageTasksChunk(ids: string[]) {
-  const params = new URLSearchParams();
-  if (ids.length > 0) {
-    params.set("ids", ids.join(","));
-  }
-  params.set("_t", String(Date.now()));
-  return httpRequest<ImageTaskListResponse>(`/api/image-tasks?${params.toString()}`);
+  return httpRequest<ImageTaskListResponse>("/api/image-tasks/query", {
+    method: "POST",
+    body: { ids },
+  });
 }
 
 export async function fetchImageTasks(ids: string[]) {

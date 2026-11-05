@@ -40,6 +40,10 @@ class ResumePollRequest(BaseModel):
     extra_timeout_secs: float = Field(default=30.0, ge=5.0, le=120.0)
 
 
+class ImageTaskQueryRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
 def _parse_task_ids(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -62,6 +66,15 @@ def create_router() -> APIRouter:
     ):
         identity = require_identity(authorization)
         return await run_in_threadpool(image_task_service.list_tasks, identity, _parse_task_ids(ids))
+
+    @router.post("/api/image-tasks/query")
+    async def query_image_tasks(
+        body: ImageTaskQueryRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        # 任务 id 会随会话变长，塞进 query 会顶到网关请求行上限（Cloudflare 520），改用请求体传
+        identity = require_identity(authorization)
+        return await run_in_threadpool(image_task_service.list_tasks, identity, body.ids)
 
     @router.post("/api/image-tasks/generations")
     async def create_generation_task(

@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, History, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, History, LoaderCircle, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { ImageComposer } from "@/app/image/components/image-composer";
+import { ImageComposer, resolveSizePreset } from "@/app/image/components/image-composer";
 import { ConversationToolbar } from "@/app/image/components/conversation-toolbar";
 import { ImageDrawingDialog } from "@/app/image/components/image-drawing-dialog";
 import { ImageResults, buildTurnLightboxImages, hasTurnLightboxImages, type ImageLightboxGroup, type ImageLightboxGroupKind, type ImageLightboxItem } from "@/app/image/components/image-results";
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
+  deleteManagedImages,
   fetchImageModelCatalog,
   fetchImageTasks,
   lookupImageTags,
@@ -31,11 +32,10 @@ import {
   type ImageModel,
   type ImageTask,
 } from "@/lib/api";
-import { clearCachedImages, deleteCachedImageSources, resolveCachedImage } from "@/lib/image-cache";
+import { deleteCachedImageSources, resolveCachedImage } from "@/lib/image-cache";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { useSettingsStore } from "@/app/settings/store";
 import {
-  clearImageConversations,
   deleteImageConversation,
   getImageConversation,
   getImageConversationStats,
@@ -605,7 +605,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     | { type: "one"; id: string }
     | { type: "prompt"; conversationId: string; turnId: string }
     | { type: "results"; conversationId: string; turnId: string }
-    | { type: "all" }
     | null
   >(null);
 
@@ -682,25 +681,21 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [conversations],
   );
   const deleteConfirmTitle =
-    deleteConfirm?.type === "all"
-      ? "清空历史记录"
-      : deleteConfirm?.type === "prompt"
-        ? "删除提示词记录"
-        : deleteConfirm?.type === "results"
-          ? "删除生成结果"
-          : deleteConfirm?.type === "one"
-            ? "删除对话"
-            : "";
+    deleteConfirm?.type === "prompt"
+      ? "删除提示词记录"
+      : deleteConfirm?.type === "results"
+        ? "删除生成结果"
+        : deleteConfirm?.type === "one"
+          ? "删除对话"
+          : "";
   const deleteConfirmDescription =
-    deleteConfirm?.type === "all"
-      ? "确认删除全部图片历史记录吗？删除后无法恢复。"
-      : deleteConfirm?.type === "prompt"
-        ? "确认删除这条提示词记录吗？对应生成结果会保留。"
-        : deleteConfirm?.type === "results"
-          ? "确认删除这条生成结果吗？对应提示词记录会保留。"
-          : deleteConfirm?.type === "one"
-            ? "确认删除这条图片对话吗？删除后无法恢复。"
-            : "";
+    deleteConfirm?.type === "prompt"
+      ? "确认删除这条提示词记录吗？对应生成结果会保留。"
+      : deleteConfirm?.type === "results"
+        ? "确认删除这条生成结果吗？对应提示词记录会保留。"
+        : deleteConfirm?.type === "one"
+          ? "仅删除会话会保留已生成的图片（可在图片管理里找到）；删除会话和图片会一并移除这些图片文件。"
+          : "";
   const pendingBatchImageCount = pendingBatch ? pendingBatch.prompts.length * pendingBatch.count : 0;
   const pendingBatchOverLimit = pendingBatch
     ? pendingBatch.prompts.length > BATCH_SOFT_LIMIT_PROMPTS || pendingBatchImageCount > BATCH_SOFT_LIMIT_IMAGES
@@ -1227,7 +1222,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     textareaRef.current?.focus();
   };
 
-  const handleDeleteConversation = async (id: string) => {
+  const handleDeleteConversation = async (id: string, options: { withImages?: boolean } = {}) => {
     const removedConversation = hydratedConversationsRef.current.get(id) ?? null;
     const nextConversations = conversations.filter((item) => item.id !== id);
     conversationsRef.current = nextConversations;
@@ -1239,6 +1234,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
 
     try {
+      // 图片归属是靠会话记录反查的，必须先删图片再删会话，否则会查不到
+      if (options.withImages) {
+        await deleteManagedImages({ conversation_id: id });
+      }
       await deleteImageConversation(id);
       await deleteCachedImageSources(getConversationResultSources(removedConversation));
     } catch (error) {
@@ -1307,23 +1306,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
-  const handleClearHistory = async () => {
-    try {
-      await clearImageConversations();
-      await clearCachedImages().catch(() => undefined);
-      conversationsRef.current = [];
-      setConversations([]);
-      hydratedConversationsRef.current.clear();
-      setActiveConversation(null);
-      setSelectedConversationId(null);
-      resetComposer();
-      toast.success("已清空历史记录");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "清空历史记录失败";
-      toast.error(message);
-    }
-  };
-
   const handleRenameConversation = async (id: string, title: string) => {
     const updatedAt = new Date().toISOString();
     const nextConversations = conversations.map((item) =>
@@ -1360,26 +1342,17 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setDeleteConfirm({ type: "results", conversationId, turnId });
   };
 
-  const openClearHistoryConfirm = () => {
-    setIsHistoryOpen(false);
-    setDeleteConfirm({ type: "all" });
-  };
-
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (mode: "default" | "withImages" = "default") => {
     const target = deleteConfirm;
     setDeleteConfirm(null);
     if (!target) {
-      return;
-    }
-    if (target.type === "all") {
-      await handleClearHistory();
       return;
     }
     if (target.type === "prompt" || target.type === "results") {
       await handleDeleteTurnPart(target.conversationId, target.turnId, target.type);
       return;
     }
-    await handleDeleteConversation(target.id);
+    await handleDeleteConversation(target.id, { withImages: mode === "withImages" });
   };
 
   const appendReferenceImages = useCallback(async (files: File[]) => {
@@ -2308,7 +2281,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             isLoadingHistory={isLoadingHistory}
             selectedConversationId={selectedConversationId}
             onCreateDraft={handleCreateDraft}
-            onClearHistory={openClearHistoryConfirm}
             onSelectConversation={setSelectedConversationId}
             onDeleteConversation={openDeleteConversationConfirm}
             onRenameConversation={handleRenameConversation}
@@ -2333,7 +2305,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   handleCreateDraft();
                   setIsHistoryOpen(false);
                 }}
-                onClearHistory={openClearHistoryConfirm}
                 onSelectConversation={(id) => {
                   setSelectedConversationId(id);
                   setIsHistoryOpen(false);
@@ -2363,14 +2334,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             >
               <Plus className="size-4" />
               新建
-            </Button>
-            <Button
-              variant="outline"
-              className="h-10 rounded-2xl border-stone-200 bg-white/85 px-3 text-stone-600 shadow-sm"
-              onClick={openClearHistoryConfirm}
-              disabled={conversations.length === 0}
-            >
-              <Trash2 className="size-4" />
             </Button>
           </div>
 
@@ -2523,9 +2486,27 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
                 取消
               </Button>
-              <Button className="bg-rose-600 text-white hover:bg-rose-700" onClick={() => void handleConfirmDelete()}>
-                确认删除
-              </Button>
+              {deleteConfirm.type === "one" ? (
+                <>
+                  <Button
+                    variant="outline"
+                    className="border-stone-200"
+                    onClick={() => void handleConfirmDelete()}
+                  >
+                    仅删除会话
+                  </Button>
+                  <Button
+                    className="bg-rose-600 text-white hover:bg-rose-700"
+                    onClick={() => void handleConfirmDelete("withImages")}
+                  >
+                    删除会话和图片
+                  </Button>
+                </>
+              ) : (
+                <Button className="bg-rose-600 text-white hover:bg-rose-700" onClick={() => void handleConfirmDelete()}>
+                  确认删除
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -12,7 +12,6 @@ type ImageSidebarProps = {
   isLoadingHistory: boolean;
   selectedConversationId: string | null;
   onCreateDraft: () => void;
-  onClearHistory: () => void | Promise<void>;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void | Promise<void>;
   onRenameConversation: (id: string, title: string) => void | Promise<void>;
@@ -25,7 +24,6 @@ export function ImageSidebar({
   isLoadingHistory,
   selectedConversationId,
   onCreateDraft,
-  onClearHistory,
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
@@ -70,14 +68,6 @@ export function ImageSidebar({
             <Button className="h-10 flex-1 rounded-xl bg-stone-950 text-white hover:bg-stone-800" onClick={onCreateDraft}>
               <MessageSquarePlus className="size-4" />
               新建对话
-            </Button>
-            <Button
-              variant="outline"
-              className="h-10 rounded-xl border-stone-200 bg-white/85 px-3 text-stone-600 hover:bg-white"
-              onClick={() => void onClearHistory()}
-              disabled={conversations.length === 0}
-            >
-              <Trash2 className="size-4" />
             </Button>
           </div>
         )}

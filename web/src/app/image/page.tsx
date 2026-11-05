@@ -784,10 +784,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         typeof window !== "undefined" ? window.localStorage.getItem(IMAGE_QUALITY_STORAGE_KEY) : null;
       const storedCount =
         typeof window !== "undefined" ? window.localStorage.getItem(IMAGE_COUNT_STORAGE_KEY) : null;
-      setImageRatio(storedRatio || "1:1");
-      setImageTier(storedTier || "1k");
-      setImageWidth("1024");
-      setImageHeight("1024");
+      const nextRatio = storedRatio || "1:1";
+      const nextTier = storedTier || "1k";
+      setImageRatio(nextRatio);
+      setImageTier(nextTier);
+      const restoredPreset = resolveSizePreset(nextRatio, nextTier);
+      setImageWidth(restoredPreset?.width ?? "1024");
+      setImageHeight(restoredPreset?.height ?? "1024");
       setImageQuality(storedQuality || "auto");
       setImageCount(storedCount ? clampImageCount(storedCount) : "1");
 
@@ -1179,6 +1182,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     if (sizeMatch) {
       setImageWidth(sizeMatch[1]);
       setImageHeight(sizeMatch[2]);
+    } else {
+      // 老数据可能没存 size，按比例档位补齐，避免只改比例不改宽高
+      const preset = resolveSizePreset(latestTurn.ratio || "1:1", latestTurn.tier || "1k");
+      if (preset) {
+        setImageWidth(preset.width);
+        setImageHeight(preset.height);
+      }
     }
     if (latestTurn.model && imageModels.includes(latestTurn.model)) {
       setImageModel(latestTurn.model);

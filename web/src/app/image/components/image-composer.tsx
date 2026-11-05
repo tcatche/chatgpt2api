@@ -85,6 +85,12 @@ const aspectOptions = [
 ];
 const countOptions = Array.from({ length: 10 }, (_, index) => String(index + 1));
 
+/** 按「比例 + 档位」查预设尺寸，恢复参数时用它保证宽高和比例一致。 */
+export function resolveSizePreset(ratio: string, tier: string) {
+  const matched = aspectOptions.find((option) => option.ratio === ratio && option.tier === tier);
+  return matched ? { width: matched.width, height: matched.height } : null;
+}
+
 export function ImageComposer({
   prompt,
   imageCount,
@@ -133,7 +139,13 @@ export function ImageComposer({
     [imageModels],
   );
   const qualityLabel = qualityOptions.find((option) => option.value === imageQuality)?.label || "自动";
-  const ratioLabel = imageRatio === "auto" ? "auto" : `${imageRatio}(${imageTier})`;
+  // 宽高是可手改的，和当前比例档位的预设不一致时直接显示真实尺寸，避免「界面写 9:16、实际出 1:1」
+  const ratioPreset = resolveSizePreset(imageRatio, imageTier);
+  const sizeMismatch = ratioPreset
+    ? ratioPreset.width !== imageWidth || ratioPreset.height !== imageHeight
+    : false;
+  const ratioLabel =
+    imageRatio === "auto" ? "auto" : sizeMismatch ? `${imageWidth}×${imageHeight}` : `${imageRatio}(${imageTier})`;
   const imageSizeLabel = `${qualityLabel} · ${ratioLabel} · ${imageCount || 1} 张`;
   const selectedModelLabel = modelOptions.find((option) => option.value === imageModel)?.label || imageModel;
   const isCodexModel = imageModel.toLowerCase().includes("codex");

@@ -302,6 +302,10 @@ class CloudflareR2Client:
         self.session.close()
 
 
+# 备份包可能有几十 MB，WebDAV 传输需要比图片上传宽松得多的超时
+BACKUP_TRANSFER_TIMEOUT = 600
+
+
 def _dav_time_to_iso(value: object) -> str:
     """把 WebDAV 的 RFC1123 时间转成与 R2 一致的 ISO 字符串，方便列表排序与展示。"""
     text = _clean(value)
@@ -361,14 +365,28 @@ class WebDAVTarget:
         content_type: str,
         metadata: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        self.client.put(key, payload, content_type)
+        # 备份包动辄几十 MB，沿用图片上传那 30 秒超时会被中途掐断
+        try:
+            self.client.put(key, payload, content_type, timeout=BACKUP_TRANSFER_TIMEOUT)
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"上传备份到 WebDAV 失败：{exc}") from exc
         return {"key": key, "size": len(payload)}
 
     def delete_object(self, key: str) -> None:
-        self.client.delete(key)
+        try:
+            self.client.delete(key)
+        except Exception as exc:
+            raise BackupError(f"删除 WebDAV 备份失败：{exc}") from exc
 
     def download_bytes(self, key: str) -> bytes:
-        return self.client.get(key)
+        try:
+            return self.client.get(key, timeout=BACKUP_TRANSFER_TIMEOUT)
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"从 WebDAV 下载备份失败：{exc}") from exc
 
     def list_objects(self) -> list[dict[str, object]]:
         url = self.client.remote_url(self.prefix)
@@ -378,14 +396,17 @@ class WebDAVTarget:
             "<getcontentlength/><getlastmodified/><resourcetype/>"
             "</prop></propfind>"
         )
-        response = self.client.session.request(
-            "PROPFIND",
-            url,
-            data=body.encode("utf-8"),
-            headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"},
-            timeout=60,
-            **self.client._auth_kwargs(),
-        )
+        try:
+            response = self.client.session.request(
+                "PROPFIND",
+                url,
+                data=body.encode("utf-8"),
+                headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"},
+                timeout=60,
+                **self.client._auth_kwargs(),
+            )
+        except Exception as exc:
+            raise BackupError(f"获取备份列表失败：{exc}") from exc
         if response.status_code == 404:
             return []
         if response.status_code >= 400:
@@ -535,6 +556,10 @@ class BackupService:
         client = _make_backup_client(config.get_backup_settings())
         try:
             return client.test_connection()
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"测试备份连接失败：{exc}") from exc
         finally:
             client.close()
 
@@ -544,6 +569,10 @@ class BackupService:
         client = _make_backup_client(config.get_backup_settings())
         try:
             items = client.list_objects()
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"获取备份列表失败：{exc}") from exc
         finally:
             client.close()
         parsed: list[dict[str, object]] = []
@@ -567,6 +596,10 @@ class BackupService:
         client = _make_backup_client(config.get_backup_settings())
         try:
             client.delete_object(candidate)
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"删除备份失败：{exc}") from exc
         finally:
             client.close()
 
@@ -577,6 +610,10 @@ class BackupService:
         client = _make_backup_client(config.get_backup_settings())
         try:
             payload = client.download_bytes(candidate)
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"下载备份失败：{exc}") from exc
         finally:
             client.close()
         name = candidate.rsplit("/", 1)[-1] or "backup.bin"
@@ -602,6 +639,10 @@ class BackupService:
         client = _make_backup_client(config.get_backup_settings())
         try:
             payload = client.download_bytes(candidate)
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"读取备份详情失败：{exc}") from exc
         finally:
             client.close()
         detail = self._decode_backup_payload(candidate, payload)
@@ -670,7 +711,12 @@ class BackupService:
             "trigger": trigger,
         }
         try:
-            result = client.upload_bytes(object_key, payload, content_type="application/octet-stream", metadata=metadata)
+            try:
+                result = client.upload_bytes(object_key, payload, content_type="application/octet-stream", metadata=metadata)
+            except BackupError:
+                raise
+            except Exception as exc:
+                raise BackupError(f"上传备份失败（{len(payload)} 字节）：{exc}") from exc
             self._apply_rotation(client, int(settings.get("rotation_keep") or 0))
             return {
                 "key": result["key"],

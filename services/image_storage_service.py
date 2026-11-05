@@ -127,7 +127,8 @@ class WebDAVClient:
         return {"auth": (self.username, self.password)} if self.username or self.password else {}
 
     def _request(self, method: str, url: str, **kwargs):
-        response = self.session.request(method, url, timeout=30, **self._auth_kwargs(), **kwargs)
+        timeout = kwargs.pop("timeout", 30)
+        response = self.session.request(method, url, timeout=timeout, **self._auth_kwargs(), **kwargs)
         if response.status_code >= 400 and not (method == "MKCOL" and response.status_code in {405}):
             raise ImageStorageError(f"WebDAV {method} failed: HTTP {response.status_code}")
         return response
@@ -150,14 +151,14 @@ class WebDAVClient:
             if response.status_code >= 400:
                 raise ImageStorageError(f"WebDAV MKCOL failed: HTTP {response.status_code}")
 
-    def put(self, rel: str, payload: bytes, content_type: str = "image/png") -> str:
+    def put(self, rel: str, payload: bytes, content_type: str = "image/png", timeout: int = 30) -> str:
         self.ensure_dirs(rel)
         url = self.remote_url(rel)
-        self._request("PUT", url, data=payload, headers={"Content-Type": content_type})
+        self._request("PUT", url, data=payload, headers={"Content-Type": content_type}, timeout=timeout)
         return url
 
-    def get(self, rel: str) -> bytes:
-        response = self._request("GET", self.remote_url(rel))
+    def get(self, rel: str, timeout: int = 30) -> bytes:
+        response = self._request("GET", self.remote_url(rel), timeout=timeout)
         return bytes(response.content)
 
     def delete(self, rel: str) -> bool:

@@ -155,13 +155,20 @@ def _normalize_backup_include(value: object) -> dict[str, bool]:
 
 def _normalize_backup_settings(value: object) -> dict[str, object]:
     source = value if isinstance(value, dict) else {}
+    provider = str(source.get("provider") or "cloudflare_r2").strip().lower()
+    if provider not in {"cloudflare_r2", "webdav"}:
+        provider = "cloudflare_r2"
     return {
         "enabled": _normalize_bool(source.get("enabled"), False),
-        "provider": "cloudflare_r2",
+        "provider": provider,
         "account_id": str(source.get("account_id") or "").strip(),
         "access_key_id": str(source.get("access_key_id") or "").strip(),
         "secret_access_key": str(source.get("secret_access_key") or "").strip(),
         "bucket": str(source.get("bucket") or "").strip(),
+        "webdav_url": str(source.get("webdav_url") or "").strip().rstrip("/"),
+        "webdav_username": str(source.get("webdav_username") or "").strip(),
+        "webdav_password": str(source.get("webdav_password") or "").strip(),
+        "webdav_root_path": str(source.get("webdav_root_path") or "").strip().strip("/"),
         "prefix": str(source.get("prefix") or "backups").strip().strip("/") or "backups",
         "interval_minutes": _normalize_positive_int(source.get("interval_minutes"), 360, 1),
         "rotation_keep": _normalize_positive_int(source.get("rotation_keep"), 10, 0),

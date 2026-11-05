@@ -111,6 +111,8 @@ export function BackupSettingsCard() {
     return null;
   }
 
+  const provider = String(backup.provider || "cloudflare_r2") === "webdav" ? "webdav" : "cloudflare_r2";
+
   const handleOpenDetail = async (key: string) => {
     setDetailLoading(true);
     setDetailOpen(true);
@@ -204,28 +206,84 @@ export function BackupSettingsCard() {
               启用备份加密
             </label>
 
-          <div className="space-y-2">
-            <label className="text-sm text-stone-700">Cloudflare Account ID</label>
-            <Input value={String(backup.account_id || "")} onChange={(event) => setBackupField("account_id", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm text-stone-700">Bucket 名称</label>
-            <Input value={String(backup.bucket || "")} onChange={(event) => setBackupField("bucket", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm text-stone-700">备份存储</label>
+            <div className="inline-flex rounded-xl border border-stone-200 bg-white p-1">
+              {[
+                { value: "cloudflare_r2", label: "Cloudflare R2" },
+                { value: "webdav", label: "WebDAV" },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setBackupField("provider", option.value)}
+                  className={
+                    provider === option.value
+                      ? "rounded-lg bg-stone-950 px-3.5 py-1.5 text-sm font-medium text-white"
+                      : "rounded-lg px-3.5 py-1.5 text-sm text-stone-600 transition hover:bg-stone-100"
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-stone-500">
+              {provider === "webdav"
+                ? "备份写入 WebDAV 目录，适合已有的自建网盘。"
+                : "备份写入 Cloudflare R2 桶，需要 R2 的 S3 访问凭证。"}
+            </p>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm text-stone-700">Access Key ID</label>
-            <Input value={String(backup.access_key_id || "")} onChange={(event) => setBackupField("access_key_id", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm text-stone-700">Secret Access Key</label>
-            <Input type="password" value={String(backup.secret_access_key || "")} onChange={(event) => setBackupField("secret_access_key", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
-          </div>
+          {provider === "webdav" ? (
+            <>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">WebDAV 地址</label>
+                <Input value={String(backup.webdav_url || "")} onChange={(event) => setBackupField("webdav_url", event.target.value)} placeholder="https://nas.example.com/webdav" className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">根目录</label>
+                <Input value={String(backup.webdav_root_path || "")} onChange={(event) => setBackupField("webdav_root_path", event.target.value)} placeholder="chatgpt2api" className="h-10 rounded-xl border-stone-200 bg-white" />
+                <p className="text-xs text-stone-500">必填，WebDAV 账号下的路径，例如 `chatgpt2api`。</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">用户名</label>
+                <Input value={String(backup.webdav_username || "")} onChange={(event) => setBackupField("webdav_username", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">密码</label>
+                <Input type="password" value={String(backup.webdav_password || "")} onChange={(event) => setBackupField("webdav_password", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+              <p className="text-xs text-stone-500 md:col-span-2">
+                地址、用户名、密码留空时自动沿用「图片存储」里的 WebDAV 连接；根目录与备份文件夹必须自己填，备份最终写到「地址/根目录/备份文件夹」。
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">Cloudflare Account ID</label>
+                <Input value={String(backup.account_id || "")} onChange={(event) => setBackupField("account_id", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">Bucket 名称</label>
+                <Input value={String(backup.bucket || "")} onChange={(event) => setBackupField("bucket", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">Access Key ID</label>
+                <Input value={String(backup.access_key_id || "")} onChange={(event) => setBackupField("access_key_id", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-stone-700">Secret Access Key</label>
+                <Input type="password" value={String(backup.secret_access_key || "")} onChange={(event) => setBackupField("secret_access_key", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
+              </div>
+            </>
+          )}
 
           <div className="space-y-2">
-            <label className="text-sm text-stone-700">备份前缀</label>
+            <label className="text-sm text-stone-700">{provider === "webdav" ? "备份文件夹" : "备份前缀"}</label>
             <Input value={String(backup.prefix || "")} onChange={(event) => setBackupField("prefix", event.target.value)} placeholder="backups" className="h-10 rounded-xl border-stone-200 bg-white" />
-            <p className="text-xs text-stone-500">R2 内对象前缀，例如 `backups/prod`。</p>
+            <p className="text-xs text-stone-500">
+              {provider === "webdav" ? "备份写入「根目录」下的这个文件夹，不存在会自动创建。" : "R2 内对象前缀，例如 `backups/prod`。"}
+            </p>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-stone-700">定时备份间隔</label>

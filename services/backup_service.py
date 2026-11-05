@@ -9,14 +9,16 @@ import random
 import subprocess
 import tarfile
 import threading
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 from curl_cffi import requests
 
 from services.config import BASE_DIR, CONFIG_FILE, DATA_DIR, config, load_backup_state, save_backup_state
-from services.image_storage_service import IMAGE_INDEX_FILE
+from services.image_storage_service import IMAGE_INDEX_FILE, WebDAVClient
 from services.image_tags_service import TAGS_FILE
 
 
@@ -300,6 +302,143 @@ class CloudflareR2Client:
         self.session.close()
 
 
+def _dav_time_to_iso(value: object) -> str:
+    """把 WebDAV 的 RFC1123 时间转成与 R2 一致的 ISO 字符串，方便列表排序与展示。"""
+    text = _clean(value)
+    if not text:
+        return ""
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _merge_webdav_backup_settings(settings: dict[str, object]) -> dict[str, object]:
+    """WebDAV 备份只继承连接凭证，备份目录必须由用户显式指定，避免写进意外位置。"""
+    merged = dict(settings)
+    storage = config.get_image_storage_settings()
+    for key in ("webdav_url", "webdav_username", "webdav_password"):
+        if not _clean(merged.get(key)):
+            merged[key] = storage.get(key)
+    return merged
+
+
+class WebDAVTarget:
+    """把备份对象读写映射到 WebDAV 目录，接口与 CloudflareR2Client 保持一致。"""
+
+    def __init__(self, settings: dict[str, object]) -> None:
+        self.prefix = (_clean(settings.get("prefix")) or "backups").strip("/") or "backups"
+        self.client = WebDAVClient({
+            "webdav_url": settings.get("webdav_url"),
+            "webdav_username": settings.get("webdav_username"),
+            "webdav_password": settings.get("webdav_password"),
+            "webdav_root_path": settings.get("webdav_root_path"),
+        })
+
+    def validate(self) -> None:
+        if not self.client.url:
+            raise BackupError("WebDAV 备份配置不完整：缺少服务器地址")
+        if not self.client.root_path:
+            raise BackupError("WebDAV 备份配置不完整：缺少备份目录")
+
+    def test_connection(self) -> dict[str, object]:
+        key = f"{self.prefix}/.chatgpt2api-backup-test.txt"
+        try:
+            self.client.put(key, b"chatgpt2api webdav backup test\n", "text/plain")
+            self.client.delete(key)
+            return {"ok": True, "status": 200, "error": None}
+        except Exception as exc:
+            return {"ok": False, "status": 0, "error": str(exc) or exc.__class__.__name__}
+
+    def upload_bytes(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        content_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        self.client.put(key, payload, content_type)
+        return {"key": key, "size": len(payload)}
+
+    def delete_object(self, key: str) -> None:
+        self.client.delete(key)
+
+    def download_bytes(self, key: str) -> bytes:
+        return self.client.get(key)
+
+    def list_objects(self) -> list[dict[str, object]]:
+        url = self.client.remote_url(self.prefix)
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<propfind xmlns="DAV:"><prop>'
+            "<getcontentlength/><getlastmodified/><resourcetype/>"
+            "</prop></propfind>"
+        )
+        response = self.client.session.request(
+            "PROPFIND",
+            url,
+            data=body.encode("utf-8"),
+            headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"},
+            timeout=60,
+            **self.client._auth_kwargs(),
+        )
+        if response.status_code == 404:
+            return []
+        if response.status_code >= 400:
+            raise BackupError(f"获取备份列表失败：HTTP {response.status_code}")
+        return _parse_webdav_listing(response.content, self.prefix)
+
+    def close(self) -> None:
+        self.client.session.close()
+
+
+def _parse_webdav_listing(payload: bytes, prefix: str) -> list[dict[str, object]]:
+    """解析 PROPFIND 的 multistatus，只保留备份对象，按更新时间倒序。"""
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise BackupError(f"解析 WebDAV 备份列表失败：{exc}") from exc
+    items: list[dict[str, object]] = []
+    for node in root.findall("{DAV:}response"):
+        href = node.findtext("{DAV:}href") or ""
+        # Depth:1 会带回目录自身，目录以 / 结尾，直接跳过
+        if not href or href.endswith("/"):
+            continue
+        name = unquote(href.rstrip("/").rsplit("/", 1)[-1])
+        if not _is_backup_object(name):
+            continue
+        size = 0
+        updated_at = ""
+        for propstat in node.findall("{DAV:}propstat"):
+            if "200" not in (propstat.findtext("{DAV:}status") or ""):
+                continue
+            prop = propstat.find("{DAV:}prop")
+            if prop is None:
+                continue
+            raw_size = (prop.findtext("{DAV:}getcontentlength") or "0").strip() or "0"
+            size = int(raw_size) if raw_size.isdigit() else 0
+            updated_at = _dav_time_to_iso(prop.findtext("{DAV:}getlastmodified"))
+            break
+        items.append({"key": f"{prefix}/{name}", "size": size, "updated_at": updated_at})
+    items.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    return items
+
+    def close(self) -> None:
+        self.client.session.close()
+
+
+def _make_backup_client(settings: dict[str, object]):
+    """按 provider 返回备份存储客户端，R2 与 WebDAV 共用同一套调用接口。"""
+    provider = _clean(settings.get("provider")) or "cloudflare_r2"
+    if provider == "webdav":
+        return WebDAVTarget(_merge_webdav_backup_settings(settings))
+    return CloudflareR2Client(settings)
+
+
 class BackupService:
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -358,6 +497,9 @@ class BackupService:
 
     def is_configured(self) -> bool:
         settings = config.get_backup_settings()
+        if _clean(settings.get("provider")) == "webdav":
+            merged = _merge_webdav_backup_settings(settings)
+            return bool(_clean(merged.get("webdav_url")) and _clean(merged.get("webdav_root_path")))
         return all([
             _clean(settings.get("account_id")),
             _clean(settings.get("access_key_id")),
@@ -369,6 +511,7 @@ class BackupService:
         settings = dict(config.get_backup_settings())
         settings["secret_access_key"] = "********" if _clean(settings.get("secret_access_key")) else ""
         settings["passphrase"] = "********" if _clean(settings.get("passphrase")) else ""
+        settings["webdav_password"] = "********" if _clean(settings.get("webdav_password")) else ""
         return settings
 
     def update_settings(self, payload: dict[str, object]) -> dict[str, object]:
@@ -383,11 +526,13 @@ class BackupService:
             merged["secret_access_key"] = current.get("secret_access_key")
         if payload.get("passphrase") == "********":
             merged["passphrase"] = current.get("passphrase")
+        if payload.get("webdav_password") == "********":
+            merged["webdav_password"] = current.get("webdav_password")
         updated = config.update({"backup": merged})
         return dict(updated.get("backup") or {})
 
     def test_connection(self) -> dict[str, object]:
-        client = CloudflareR2Client(config.get_backup_settings())
+        client = _make_backup_client(config.get_backup_settings())
         try:
             return client.test_connection()
         finally:
@@ -396,7 +541,7 @@ class BackupService:
     def list_backups(self) -> list[dict[str, object]]:
         if not self.is_configured():
             return []
-        client = CloudflareR2Client(config.get_backup_settings())
+        client = _make_backup_client(config.get_backup_settings())
         try:
             items = client.list_objects()
         finally:
@@ -419,7 +564,7 @@ class BackupService:
         candidate = _clean(key)
         if not candidate:
             raise BackupError("备份对象 key 不能为空")
-        client = CloudflareR2Client(config.get_backup_settings())
+        client = _make_backup_client(config.get_backup_settings())
         try:
             client.delete_object(candidate)
         finally:
@@ -429,7 +574,7 @@ class BackupService:
         candidate = _clean(key)
         if not candidate:
             raise BackupError("备份对象 key 不能为空")
-        client = CloudflareR2Client(config.get_backup_settings())
+        client = _make_backup_client(config.get_backup_settings())
         try:
             payload = client.download_bytes(candidate)
         finally:
@@ -454,7 +599,7 @@ class BackupService:
         candidate = _clean(key)
         if not candidate:
             raise BackupError("备份对象 key 不能为空")
-        client = CloudflareR2Client(config.get_backup_settings())
+        client = _make_backup_client(config.get_backup_settings())
         try:
             payload = client.download_bytes(candidate)
         finally:
@@ -503,7 +648,7 @@ class BackupService:
 
     def _run_backup_once(self, *, trigger: str) -> dict[str, object]:
         settings = config.get_backup_settings()
-        client = CloudflareR2Client(settings)
+        client = _make_backup_client(settings)
         client.validate()
         payload_raw = self._build_backup_archive(settings, trigger=trigger)
         encrypted = bool(settings.get("encrypt"))
@@ -544,7 +689,7 @@ class BackupService:
             decoded = _openssl_decrypt(decoded, passphrase)
         return self._decode_archive_detail(decoded)
 
-    def _apply_rotation(self, client: CloudflareR2Client, keep: int) -> None:
+    def _apply_rotation(self, client, keep: int) -> None:
         if keep <= 0:
             return
         items = [item for item in client.list_objects() if _is_backup_object(item.get("key"))]

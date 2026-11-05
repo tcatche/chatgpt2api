@@ -217,11 +217,15 @@ export type BackupInclude = {
 
 export type BackupSettings = {
   enabled: boolean;
-  provider: "cloudflare_r2" | string;
+  provider: "cloudflare_r2" | "webdav";
   account_id: string;
   access_key_id: string;
   secret_access_key: string;
   bucket: string;
+  webdav_url: string;
+  webdav_username: string;
+  webdav_password: string;
+  webdav_root_path: string;
   prefix: string;
   interval_minutes: number | string;
   rotation_keep: number | string;

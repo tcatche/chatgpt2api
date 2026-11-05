@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Star, X } from "lucide-react";
 
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { resolveCachedImage } from "@/lib/image-cache";
@@ -29,6 +29,9 @@ type ImageLightboxProps = {
   onNextGroup?: () => void;
   /** 当前组在会话中的位置标签，例如「第 2 / 5 轮」 */
   groupLabel?: string;
+  /** 当前这张图是否已收藏；不传则不显示收藏按钮 */
+  isFavorite?: (index: number) => boolean;
+  onToggleFavorite?: (index: number) => void;
 };
 
 type ImageTransform = {
@@ -108,6 +111,8 @@ export function ImageLightbox({
   onPreviousGroup,
   onNextGroup,
   groupLabel,
+  isFavorite,
+  onToggleFavorite,
 }: ImageLightboxProps) {
   const gestureRef = useRef<TouchGesture | null>(null);
   const lastTapRef = useRef(0);
@@ -117,6 +122,7 @@ export function ImageLightbox({
   const [isGesturing, setIsGesturing] = useState(false);
   const current = images[currentIndex];
   const currentImageSrc = useCachedImageSource(current?.src || "", open && Boolean(current));
+  const favorited = Boolean(isFavorite?.(currentIndex));
   const hasPrev = currentIndex > 0;
   const hasNext = currentIndex < images.length - 1;
 
@@ -391,6 +397,24 @@ export function ImageLightbox({
           <DialogPrimitive.Title className="sr-only">
             图片预览
           </DialogPrimitive.Title>
+
+          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] left-4 z-10 flex items-center gap-2">
+            {onToggleFavorite ? (
+              <button
+                type="button"
+                onClick={() => onToggleFavorite(currentIndex)}
+                className={cn(
+                  "inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-black/70",
+                  favorited && "bg-amber-500/80 hover:bg-amber-500",
+                )}
+                aria-label={favorited ? "取消收藏" : "收藏"}
+                aria-pressed={favorited}
+                title={favorited ? "取消收藏" : "收藏"}
+              >
+                <Star className={cn("size-4", favorited && "fill-white text-white")} />
+              </button>
+            ) : null}
+          </div>
 
           <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] right-4 z-10 flex items-center gap-2">
             {groupLabel ? (

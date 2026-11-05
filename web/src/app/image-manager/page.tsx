@@ -925,6 +925,14 @@ function ImageManagerContent() {
         open={lightboxOpen}
         onOpenChange={setLightboxOpen}
         onIndexChange={setLightboxIndex}
+        isFavorite={(index) => {
+          const item = filteredItems[index];
+          return item ? isFavorite(item) : false;
+        }}
+        onToggleFavorite={(index) => {
+          const item = filteredItems[index];
+          if (item) handleToggleFavorite(item);
+        }}
       />
       <Dialog open={deleteMode === "selected"} onOpenChange={(open) => (!open ? setDeleteMode(null) : null)}>
         <DialogContent showCloseButton={false} className="rounded-2xl p-6">

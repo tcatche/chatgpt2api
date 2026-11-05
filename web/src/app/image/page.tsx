@@ -1913,6 +1913,64 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [runConversationQueue],
   );
 
+  // 批量重生成收藏图：每个轮次按收藏张数补出新任务，原图保留
+  const handleBatchRegenerateFavorites = useCallback(
+    async (conversationId: string) => {
+      const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
+      if (!conversation) {
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const nextTurns: ImageTurn[] = conversation.turns.flatMap((sourceTurn) => {
+        if (!sourceTurn.prompt.trim()) {
+          return [];
+        }
+        const favoritedCount = sourceTurn.images.filter(
+          (image) => image.status === "success" && favoriteUrls[image.url ?? ""],
+        ).length;
+        if (favoritedCount === 0) {
+          return [];
+        }
+        const nextTurnId = `${BATCH_REGENERATE_ID_PREFIX}${createId()}`;
+        return [{
+          id: nextTurnId,
+          prompt: sourceTurn.prompt,
+          model: sourceTurn.model,
+          mode: sourceTurn.mode,
+          referenceImages: sourceTurn.referenceImages,
+          maskImages: sourceTurn.maskImages,
+          count: favoritedCount,
+          size: sourceTurn.size,
+          ratio: sourceTurn.ratio,
+          tier: sourceTurn.tier,
+          quality: sourceTurn.quality,
+          images: createLoadingImages(nextTurnId, favoritedCount),
+          createdAt: now,
+          status: "queued" as const,
+        }];
+      });
+      if (nextTurns.length === 0) {
+        return;
+      }
+
+      const nextConversation = {
+        ...conversation,
+        updatedAt: now,
+        turns: [...conversation.turns, ...nextTurns],
+      };
+
+      shouldStickToBottomRef.current = true;
+      const btn = scrollToLatestBtnRef.current;
+      if (btn) btn.style.display = "none";
+      setSelectedConversationId(conversationId);
+      await persistConversation(nextConversation);
+      void runConversationQueue(conversationId);
+      toast.success(`已加入 ${nextTurns.length} 个收藏图重新生成任务`);
+    },
+    [favoriteUrls, runConversationQueue],
+  );
+
   // 批量重跑失败图：只把 status=error 的单张结果换成 loading，成功的结果不动
   const handleBatchRegenerateErrors = useCallback(
     async (conversationId: string) => {
@@ -2421,8 +2479,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onOpenSketch={() => setDrawingDialog({ mode: "sketch" })}
             conversationToolbar={<ConversationToolbar
               conversation={selectedConversation}
+              favoriteUrls={favoriteUrls}
               onBatchRegenerate={handleBatchRegenerate}
               onBatchRegenerateErrors={handleBatchRegenerateErrors}
+              onBatchRegenerateFavorites={handleBatchRegenerateFavorites}
               formatConversationTime={formatConversationTime}
             />}
           />
@@ -2440,6 +2500,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         onPreviousGroup={() => goToAdjacentLightboxTurn(-1)}
         onNextGroup={() => goToAdjacentLightboxTurn(1)}
         groupLabel={lightboxGroupTurns.length > 1 ? lightboxTurnLabel : undefined}
+        isFavorite={(index) => {
+          const key = lightboxImages[index]?.favoriteKey;
+          return key ? Boolean(favoriteUrls[key]) : false;
+        }}
+        onToggleFavorite={
+          lightboxGroup?.kind === "results"
+            ? (index) => {
+                const key = lightboxImages[index]?.favoriteKey;
+                if (key) void handleToggleFavorite(key);
+              }
+            : undefined
+        }
       />
 
       <ImageDrawingDialog

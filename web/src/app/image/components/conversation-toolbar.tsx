@@ -153,16 +153,21 @@ function turnStatusLabel(status: ImageTurn["status"]) {
 
 export type ConversationToolbarProps = {
   conversation: ImageConversation | null;
+  /** 已收藏的图片 url 表，用于统计和重生成收藏图 */
+  favoriteUrls?: Record<string, boolean>;
   onBatchRegenerate: (conversationId: string, turnIds: string[]) => void | Promise<void>;
   onBatchRegenerateErrors: (conversationId: string) => void | Promise<void>;
+  onBatchRegenerateFavorites: (conversationId: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
   className?: string;
 };
 
 export function ConversationToolbar({
   conversation,
+  favoriteUrls = {},
   onBatchRegenerate,
   onBatchRegenerateErrors,
+  onBatchRegenerateFavorites,
   formatConversationTime,
   className,
 }: ConversationToolbarProps) {
@@ -199,6 +204,15 @@ export function ConversationToolbar({
       sum + (turn.prompt.trim() ? turn.images.filter((image) => image.status === "error").length : 0),
     0,
   );
+  // 已收藏且生成成功的单张图，用于批量重生成收藏图
+  const favoriteImageCount = conversation.turns.reduce(
+    (sum, turn) =>
+      sum +
+      (turn.prompt.trim()
+        ? turn.images.filter((image) => image.status === "success" && favoriteUrls[image.url ?? ""]).length
+        : 0),
+    0,
+  );
 
   const toggleBatchTurn = (turnId: string, checked: boolean) => {
     setBatchSelection((current) =>
@@ -216,6 +230,18 @@ export function ConversationToolbar({
     setBatchSubmitting(true);
     try {
       await onBatchRegenerateErrors(conversation.id);
+      setBatchOpen(false);
+      setBatchSelection([]);
+    } finally {
+      setBatchSubmitting(false);
+    }
+  };
+
+  const handleBatchRegenerateFavorites = async () => {
+    if (favoriteImageCount === 0) return;
+    setBatchSubmitting(true);
+    try {
+      await onBatchRegenerateFavorites(conversation.id);
       setBatchOpen(false);
       setBatchSelection([]);
     } finally {
@@ -402,6 +428,15 @@ export function ConversationToolbar({
               onClick={() => void handleBatchRegenerateErrors()}
             >
               重试出错图片{errorImageCount > 0 ? `（${errorImageCount}）` : ""}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              title="按收藏的张数各再生成一张，原来的图片保留"
+              disabled={favoriteImageCount === 0 || batchSubmitting}
+              onClick={() => void handleBatchRegenerateFavorites()}
+            >
+              重生成收藏图片{favoriteImageCount > 0 ? `（${favoriteImageCount}）` : ""}
             </Button>
             <Button
               type="button"

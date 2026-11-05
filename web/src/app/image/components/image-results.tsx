@@ -14,6 +14,8 @@ export type ImageLightboxItem = {
   src: string;
   sizeLabel?: string;
   dimensions?: string;
+  /** 结果图的原始 url，供灯箱查询收藏状态 */
+  favoriteKey?: string;
 };
 
 export type ImageLightboxGroupKind = "results" | "references";
@@ -93,6 +95,7 @@ export function buildTurnLightboxImages(turn: ImageTurn, kind: ImageLightboxGrou
       src,
       sizeLabel: image.b64_json ? formatBase64ImageSize(image.b64_json) : undefined,
       dimensions: imageDimensions.get(image.id),
+      favoriteKey: image.url,
     }];
   });
 }

@@ -398,7 +398,7 @@ export function ImageLightbox({
             图片预览
           </DialogPrimitive.Title>
 
-          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] left-4 z-10 flex items-center gap-2">
+          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] left-4 z-20 flex items-center gap-2">
             {onToggleFavorite ? (
               <button
                 type="button"
@@ -420,11 +420,6 @@ export function ImageLightbox({
             {groupLabel ? (
               <span className="hidden items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90 sm:inline-flex">
                 {groupLabel}
-              </span>
-            ) : null}
-            {current.sizeLabel || current.dimensions ? (
-              <span className="rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
-                {[current.sizeLabel, current.dimensions].filter(Boolean).join(" · ")}
               </span>
             ) : null}
             {images.length > 1 && (
@@ -523,6 +518,13 @@ export function ImageLightbox({
               <ChevronDown className="size-5" />
             </button>
           )}
+
+          {current.sizeLabel || current.dimensions ? (
+            // 放左下角：右上角挤不下会压住收藏按钮
+            <span className="pointer-events-none absolute bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 z-10 inline-flex items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
+              {[current.sizeLabel, current.dimensions].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

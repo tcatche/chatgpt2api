@@ -195,6 +195,54 @@ class ImageConversationServiceTests(unittest.TestCase):
             self.assertTrue(path.with_suffix(".json.migrated").exists())
             self.assertEqual(len(sorted((Path(tmp) / "image_conversations").glob("*.json"))), 1)
 
+    def test_mark_images_removed_flags_only_matching_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(Path(tmp) / "image_conversations.json")
+            two_images = turn("c1-turn")
+            two_images["images"] = [
+                {"id": "img-1", "status": "success", "url": "/images/a.png"},
+                {"id": "img-2", "status": "success", "url": "/images/b.png"},
+            ]
+            service.save_conversations(
+                OWNER,
+                [conversation("c1", "2026-10-13T01:00:00.000Z", turns=[two_images])],
+            )
+
+            marked = service.mark_images_removed(["a.png"])
+
+            self.assertEqual(marked, 1)
+            images = service.get_conversation(OWNER, "c1")["turns"][0]["images"]
+            self.assertEqual(images[0]["status"], "error")
+            self.assertIn("已在图片管理中删除", images[0]["error"])
+            self.assertEqual(images[0]["url"], "")
+            # 带 removed 标记，批量重试才不会把它当成普通失败图
+            self.assertTrue(images[0]["removed"])
+            # 没被删除的图不受影响
+            self.assertEqual(images[1]["status"], "success")
+            self.assertEqual(images[1]["url"], "/images/b.png")
+            self.assertFalse(images[1].get("removed"))
+
+    def test_mark_images_removed_skips_already_removed_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(Path(tmp) / "image_conversations.json")
+            service.save_conversations(OWNER, [conversation("c1", "2026-10-13T01:00:00.000Z")])
+
+            self.assertEqual(service.mark_images_removed(["a.png"]), 1)
+            # 同一张图再次标记不应重复计数
+            self.assertEqual(service.mark_images_removed(["a.png"]), 0)
+            images = service.get_conversation(OWNER, "c1")["turns"][0]["images"]
+            self.assertTrue(images[0]["removed"])
+
+    def test_mark_images_removed_is_noop_for_unknown_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(Path(tmp) / "image_conversations.json")
+            service.save_conversations(OWNER, [conversation("c1", "2026-10-13T01:00:00.000Z")])
+
+            self.assertEqual(service.mark_images_removed(["nope.png"]), 0)
+            self.assertEqual(service.mark_images_removed([]), 0)
+            images = service.get_conversation(OWNER, "c1")["turns"][0]["images"]
+            self.assertEqual(images[0]["status"], "success")
+
 
 if __name__ == "__main__":
     unittest.main()

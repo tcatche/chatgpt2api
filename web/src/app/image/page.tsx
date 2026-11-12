@@ -1987,7 +1987,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
         let changed = false;
         const images = turn.images.map((image) => {
-          if (image.status !== "error") {
+          // 已删除的图不参与批量重试，避免把主人主动删掉的图又生成回来
+          if (image.status !== "error" || image.removed) {
             return image;
           }
           changed = true;

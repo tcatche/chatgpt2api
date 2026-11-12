@@ -198,10 +198,13 @@ export function ConversationToolbar({
     (sum, turn) => sum + Math.max(1, turn.count || turn.images.length || 1),
     0,
   );
-  // 只统计「有提示词的轮次里失败的单张图」，用于批量重跑错误图
+  // 只统计「有提示词的轮次里失败的单张图」，用于批量重跑错误图；已删除的图不算
   const errorImageCount = conversation.turns.reduce(
     (sum, turn) =>
-      sum + (turn.prompt.trim() ? turn.images.filter((image) => image.status === "error").length : 0),
+      sum +
+      (turn.prompt.trim()
+        ? turn.images.filter((image) => image.status === "error" && !image.removed).length
+        : 0),
     0,
   );
   // 已收藏且生成成功的单张图，用于批量重生成收藏图

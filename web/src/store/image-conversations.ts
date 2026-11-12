@@ -16,6 +16,8 @@ export type StoredImage = {
   id: string;
   taskId?: string;
   status?: "loading" | "success" | "error";
+  /** 图片文件已在图片管理里删除，不能参与批量重试 */
+  removed?: boolean;
   taskStatus?: "queued" | "running";
   progress?: string;
   b64_json?: string;

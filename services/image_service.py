@@ -292,6 +292,7 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
     else:
         targets = paths or []
     removed = 0
+    removed_names: list[str] = []
     for item in targets:
         path = (root / item).resolve()
         try:
@@ -300,10 +301,17 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
             continue
         if image_storage_service.delete(item):
             removed += 1
+            removed_names.append(Path(item).name)
         for thumbnail in (_thumbnail_path(item), *_legacy_thumbnail_paths(item)):
             if thumbnail.is_file():
                 thumbnail.unlink()
         remove_tags(item)
+    # 会话里引用的图已不存在，同步标记成「已删除」，避免留下打不开的坏图
+    if removed_names:
+        try:
+            image_conversation_service.mark_images_removed(removed_names)
+        except Exception as exc:
+            logger.error(f"标记会话图片已删除失败：{exc}")
     _cleanup_empty_dirs(root)
     _cleanup_empty_dirs(config.image_thumbnails_dir)
     return {"removed": removed}

@@ -110,6 +110,51 @@ class ImageConversationService:
             })
         return refs
 
+    def mark_images_removed(self, filenames: list[str]) -> int:
+        """图片文件被删除后，把会话里引用它的结果图标记为已删除，避免留一个打不开的坏图。
+
+        只改图片状态，不动轮次里的其他信息；返回被标记的图片数量。
+        """
+        wanted = {name for name in (_clean(item) for item in filenames) if name}
+        if not wanted:
+            return 0
+        marked = 0
+        with self._lock:
+            for key, item in list(self._items.items()):
+                changed = False
+                turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+                next_turns: list[Any] = []
+                for turn in turns:
+                    if not isinstance(turn, dict):
+                        next_turns.append(turn)
+                        continue
+                    images = turn.get("images") if isinstance(turn.get("images"), list) else []
+                    next_images: list[Any] = []
+                    for image in images:
+                        if not isinstance(image, dict):
+                            next_images.append(image)
+                            continue
+                        name = image_filename_from_url(image.get("url"))
+                        if not name or name not in wanted or image.get("removed"):
+                            next_images.append(image)
+                            continue
+                        next_images.append({
+                            **image,
+                            "status": "error",
+                            "removed": True,
+                            "url": "",
+                            "error": "图片已在图片管理中删除",
+                        })
+                        marked += 1
+                        changed = True
+                    next_turns.append({**turn, "images": next_images} if next_images != images else turn)
+                if not changed:
+                    continue
+                updated = {**item, "turns": next_turns, "updatedAt": _now_iso()}
+                self._items[key] = updated
+                self._write_item_locked(key, updated)
+        return marked
+
     def get_conversation(self, identity: dict[str, object], conversation_id: str) -> dict[str, Any] | None:
         owner = _owner_id(identity)
         key = _conversation_key(owner, _clean(conversation_id))

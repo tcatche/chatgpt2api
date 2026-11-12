@@ -393,11 +393,13 @@ export function ImageResults({
 
                       if (image.status === "error") {
                         const isTimeoutError = image.error?.includes("超时") && image.taskId;
+                        const isRemoved = Boolean(image.removed);
                         return (
                           <div key={image.id} className="break-inside-avoid">
                             <div
                               className={cn(
-                                "overflow-hidden rounded-xl border border-rose-200 bg-rose-50",
+                                "overflow-hidden rounded-xl border",
+                                isRemoved ? "border-stone-200 bg-stone-50" : "border-rose-200 bg-rose-50",
                                 "aspect-square",
                                 turn.ratio === "1:1" && "sm:aspect-square",
                                 turn.ratio === "16:9" && "sm:aspect-video",
@@ -406,7 +408,12 @@ export function ImageResults({
                                 turn.ratio === "3:4" && "sm:aspect-[3/4]",
                               )}
                             >
-                            <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1.5 px-2 py-2 text-center text-[11px] leading-4 text-rose-600 sm:gap-3 sm:px-6 sm:py-8 sm:text-sm sm:leading-6">
+                            <div
+                              className={cn(
+                                "flex h-full min-h-16 flex-col items-center justify-center gap-1.5 px-2 py-2 text-center text-[11px] leading-4 sm:gap-3 sm:px-6 sm:py-8 sm:text-sm sm:leading-6",
+                                isRemoved ? "text-stone-500" : "text-rose-600",
+                              )}
+                            >
                               <p className="font-medium">图片 {index + 1}/{turn.images.length}</p>
                               <span className="line-clamp-2 sm:line-clamp-none">{image.error || "生成失败"}</span>
                               <div className="flex items-center gap-2">
@@ -422,9 +429,14 @@ export function ImageResults({
                                 <button
                                   type="button"
                                   onClick={() => void onRetryImage(selectedConversation.id, turn.id, image.id)}
-                                  className="rounded-full bg-white px-2 py-1 text-[10px] font-medium text-rose-600 shadow-sm transition hover:bg-rose-100 sm:px-3 sm:text-xs"
+                                  className={cn(
+                                    "rounded-full px-2 py-1 text-[10px] font-medium shadow-sm transition sm:px-3 sm:text-xs",
+                                    isRemoved
+                                      ? "bg-white text-stone-600 hover:bg-stone-100"
+                                      : "bg-white text-rose-600 hover:bg-rose-100",
+                                  )}
                                 >
-                                  重新生成这一张
+                                  {isRemoved ? "再次生成" : "重新生成这一张"}
                                 </button>
                               </div>
                             </div>

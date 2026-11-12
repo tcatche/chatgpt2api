@@ -229,27 +229,44 @@ function ImageManagerContent() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    setIsDeleting(true);
+    const target = deleteTarget;
+    // 先在列表里移除，接口在后台跑；失败再把这张图放回原位
+    const removedIndex = items.findIndex((item) => item.rel === target.rel);
+    const removedItem = removedIndex >= 0 ? items[removedIndex] : null;
+    const removedSelection = selectedPaths.includes(imageKey(target));
+    setItems((prev) => prev.filter((item) => item.rel !== target.rel));
+    setSelectedPaths((prev) => prev.filter((p) => p !== imageKey(target)));
+    closeDialog();
     try {
-      await deleteManagedImages({ paths: [deleteTarget.rel] });
-      setItems((prev) => prev.filter((item) => item.rel !== deleteTarget.rel));
-      setSelectedPaths((prev) => prev.filter((p) => p !== imageKey(deleteTarget)));
+      await deleteManagedImages({ paths: [target.rel] });
       toast.success("图片已删除");
+      void loadStorage();
     } catch (error) {
+      if (removedItem) {
+        setItems((prev) => {
+          const next = [...prev];
+          next.splice(Math.min(removedIndex, next.length), 0, removedItem);
+          return next;
+        });
+      }
+      if (removedSelection) {
+        setSelectedPaths((prev) => [...prev, imageKey(target)]);
+      }
       toast.error(error instanceof Error ? error.message : "删除失败");
-    } finally {
-      setIsDeleting(false);
-      closeDialog();
     }
   };
 
   const handleSetTags = async (item: ManagedImage, tags: string[]) => {
+    // 先本地高亮，再回写接口；失败时回滚成原来的标签
+    const previousTags = item.tags ?? [];
+    setItems((prev) => prev.map((i) => i.rel === item.rel ? { ...i, tags } : i));
     try {
       const result = await setImageTags(item.rel, tags);
       setItems((prev) => prev.map((i) => i.rel === item.rel ? { ...i, tags: result.tags } : i));
       const tagsData = await fetchImageTags();
       setAllTags(tagsData.tags);
     } catch (error) {
+      setItems((prev) => prev.map((i) => i.rel === item.rel ? { ...i, tags: previousTags } : i));
       toast.error(error instanceof Error ? error.message : "设置标签失败");
     }
   };
@@ -911,8 +928,8 @@ function ImageManagerContent() {
             <Button variant="outline" onClick={closeDialog} className="rounded-xl">
               取消
             </Button>
-            <Button variant="destructive" onClick={() => void handleDelete()} disabled={isDeleting} className="rounded-xl">
-              {isDeleting ? <LoaderCircle className="mr-1 size-4 animate-spin" /> : <Trash2 className="mr-1 size-4" />}
+            <Button variant="destructive" onClick={() => void handleDelete()} className="rounded-xl">
+              <Trash2 className="mr-1 size-4" />
               删除
             </Button>
           </DialogFooter>
@@ -932,6 +949,10 @@ function ImageManagerContent() {
         onToggleFavorite={(index) => {
           const item = filteredItems[index];
           if (item) handleToggleFavorite(item);
+        }}
+        onRequestDelete={(index) => {
+          const item = filteredItems[index];
+          if (item) openDeleteDialog(item);
         }}
       />
       <Dialog open={deleteMode === "selected"} onOpenChange={(open) => (!open ? setDeleteMode(null) : null)}>

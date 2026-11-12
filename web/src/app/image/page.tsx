@@ -1234,10 +1234,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const handleDeleteConversation = async (id: string, options: { withImages?: boolean } = {}) => {
     const removedConversation = hydratedConversationsRef.current.get(id) ?? null;
+    // 先把会话从列表里摘掉，接口在后台跑；失败时把原文回填，避免主人干等
+    const removedIndex = conversations.findIndex((item) => item.id === id);
+    const removedSummary = removedIndex >= 0 ? conversations[removedIndex] : null;
     const nextConversations = conversations.filter((item) => item.id !== id);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
     hydratedConversationsRef.current.delete(id);
+    const previousSelectedId = selectedConversationId;
     if (selectedConversationId === id) {
       setSelectedConversationId(pickFallbackConversationId(nextConversations));
       resetComposer();
@@ -1253,12 +1257,20 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "删除会话失败";
       toast.error(message);
-      try {
-        const items = await listImageConversations();
-        conversationsRef.current = items;
-        setConversations(items);
-      } catch {
-        // 服务端回读失败时保留当前界面状态，避免二次报错
+      // 接口失败就把界面恢复成删除前的样子
+      if (removedSummary) {
+        const restored = [...conversationsRef.current];
+        restored.splice(Math.min(removedIndex, restored.length), 0, removedSummary);
+        const sorted = sortImageConversations(restored);
+        conversationsRef.current = sorted;
+        setConversations(sorted);
+      }
+      if (previousSelectedId === id) {
+        setSelectedConversationId(id);
+        void hydrateConversation(id);
+      }
+      if (removedConversation) {
+        hydratedConversationsRef.current.set(id, removedConversation);
       }
     }
   };

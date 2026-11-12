@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Star, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Star, Trash2, X } from "lucide-react";
 
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { resolveCachedImage } from "@/lib/image-cache";
@@ -32,6 +32,8 @@ type ImageLightboxProps = {
   /** 当前这张图是否已收藏；不传则不显示收藏按钮 */
   isFavorite?: (index: number) => boolean;
   onToggleFavorite?: (index: number) => void;
+  /** 请求删除当前这张图；不传则不显示删除按钮 */
+  onRequestDelete?: (index: number) => void;
 };
 
 type ImageTransform = {
@@ -113,6 +115,7 @@ export function ImageLightbox({
   groupLabel,
   isFavorite,
   onToggleFavorite,
+  onRequestDelete,
 }: ImageLightboxProps) {
   const gestureRef = useRef<TouchGesture | null>(null);
   const lastTapRef = useRef(0);
@@ -435,6 +438,17 @@ export function ImageLightbox({
             >
               <Download className="size-4" />
             </button>
+            {onRequestDelete ? (
+              <button
+                type="button"
+                onClick={() => onRequestDelete(currentIndex)}
+                className="inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-rose-600"
+                aria-label="删除图片"
+                title="删除图片"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            ) : null}
             <DialogPrimitive.Close className="inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-black/70">
               <X className="size-4" />
               <span className="sr-only">关闭</span>

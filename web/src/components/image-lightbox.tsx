@@ -401,54 +401,25 @@ export function ImageLightbox({
             图片预览
           </DialogPrimitive.Title>
 
-          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] left-4 z-20 flex items-center gap-2">
-            {onToggleFavorite ? (
-              <button
-                type="button"
-                onClick={() => onToggleFavorite(currentIndex)}
-                className={cn(
-                  "inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-black/70",
-                  favorited && "bg-amber-500/80 hover:bg-amber-500",
-                )}
-                aria-label={favorited ? "取消收藏" : "收藏"}
-                aria-pressed={favorited}
-                title={favorited ? "取消收藏" : "收藏"}
-              >
-                <Star className={cn("size-4", favorited && "fill-white text-white")} />
-              </button>
-            ) : null}
-          </div>
-
-          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] right-4 z-10 flex items-center gap-2">
+          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] left-4 z-10 flex flex-wrap items-center gap-2 pr-4">
             {groupLabel ? (
               <span className="hidden items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90 sm:inline-flex">
                 {groupLabel}
               </span>
             ) : null}
-            {images.length > 1 && (
-              <span className="rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
+            {current.sizeLabel || current.dimensions ? (
+              <span className="inline-flex items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
+                {[current.sizeLabel, current.dimensions].filter(Boolean).join(" · ")}
+              </span>
+            ) : null}
+            {images.length > 1 ? (
+              <span className="inline-flex items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
                 {currentIndex + 1} / {images.length}
               </span>
-            )}
-            <button
-              type="button"
-              onClick={() => void handleDownload()}
-              className="inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-black/70"
-              aria-label="下载图片"
-            >
-              <Download className="size-4" />
-            </button>
-            {onRequestDelete ? (
-              <button
-                type="button"
-                onClick={() => onRequestDelete(currentIndex)}
-                className="inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-rose-600"
-                aria-label="删除图片"
-                title="删除图片"
-              >
-                <Trash2 className="size-4" />
-              </button>
             ) : null}
+          </div>
+
+          <div className="absolute top-[calc(env(safe-area-inset-top)+1rem)] right-4 z-20 flex items-center gap-2">
             <DialogPrimitive.Close className="inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white/90 transition hover:bg-black/70">
               <X className="size-4" />
               <span className="sr-only">关闭</span>
@@ -513,7 +484,7 @@ export function ImageLightbox({
             <button
               type="button"
               onClick={goPreviousGroup}
-              className="absolute top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-10 inline-flex size-10 -translate-x-1/2 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
+              className="absolute bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] left-4 z-10 inline-flex size-10 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
               aria-label="上一个生图任务"
               title="上一个生图任务"
             >
@@ -525,7 +496,7 @@ export function ImageLightbox({
             <button
               type="button"
               onClick={goNextGroup}
-              className="absolute bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] left-1/2 z-10 inline-flex size-10 -translate-x-1/2 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
+              className="absolute bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] right-4 z-10 inline-flex size-10 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
               aria-label="下一个生图任务"
               title="下一个生图任务"
             >
@@ -533,12 +504,43 @@ export function ImageLightbox({
             </button>
           )}
 
-          {current.sizeLabel || current.dimensions ? (
-            // 放左下角：右上角挤不下会压住收藏按钮
-            <span className="pointer-events-none absolute bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 z-10 inline-flex items-center rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
-              {[current.sizeLabel, current.dimensions].filter(Boolean).join(" · ")}
-            </span>
-          ) : null}
+          <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+              {onToggleFavorite ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleFavorite(currentIndex)}
+                  className={cn(
+                    "inline-flex size-11 items-center justify-center rounded-full bg-black/60 text-white/90 shadow-lg transition hover:bg-black/75",
+                    favorited && "bg-amber-500/90 hover:bg-amber-500",
+                  )}
+                  aria-label={favorited ? "取消收藏" : "收藏"}
+                  aria-pressed={favorited}
+                  title={favorited ? "取消收藏" : "收藏"}
+                >
+                  <Star className={cn("size-5", favorited && "fill-white text-white")} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void handleDownload()}
+                className="inline-flex size-11 items-center justify-center rounded-full bg-black/60 text-white/90 shadow-lg transition hover:bg-black/75"
+                aria-label="下载图片"
+                title="下载图片"
+              >
+                <Download className="size-5" />
+              </button>
+              {onRequestDelete ? (
+                <button
+                  type="button"
+                  onClick={() => onRequestDelete(currentIndex)}
+                  className="inline-flex size-11 items-center justify-center rounded-full bg-black/60 text-white/90 shadow-lg transition hover:bg-rose-600"
+                  aria-label="删除图片"
+                  title="删除图片"
+                >
+                  <Trash2 className="size-5" />
+                </button>
+              ) : null}
+            </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

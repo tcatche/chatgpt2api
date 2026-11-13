@@ -1328,6 +1328,45 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
+  // 大图里删除单张结果：只把这张标成已删除，其余图片不受影响
+  const handleDeleteLightboxImage = useCallback(
+    async (conversationId: string, turnId: string, imageId: string) => {
+      const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
+      if (!conversation) {
+        return;
+      }
+      const targetTurn = conversation.turns.find((turn) => turn.id === turnId);
+      const targetImage = targetTurn?.images.find((image) => image.id === imageId);
+      if (!targetTurn || !targetImage) {
+        return;
+      }
+
+      const nextConversation = {
+        ...conversation,
+        updatedAt: new Date().toISOString(),
+        turns: conversation.turns.map((turn) => {
+          if (turn.id !== turnId) {
+            return turn;
+          }
+          const images = turn.images.map((image) =>
+            image.id === imageId
+              ? { ...image, status: "error" as const, url: undefined, b64_json: undefined, error: "图片已删除" }
+              : image,
+          );
+          const derived = deriveTurnStatus({ ...turn, images });
+          return { ...turn, ...derived, images };
+        }),
+      };
+
+      await persistConversation(nextConversation);
+      const source = targetImage.url;
+      if (source) {
+        await deleteCachedImageSources([source]);
+      }
+    },
+    [persistConversation],
+  );
+
   const handleRenameConversation = async (id: string, title: string) => {
     const updatedAt = new Date().toISOString();
     const nextConversations = conversations.map((item) =>
@@ -2522,6 +2561,24 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             ? (index) => {
                 const key = lightboxImages[index]?.favoriteKey;
                 if (key) void handleToggleFavorite(key);
+              }
+            : undefined
+        }
+        onRequestDelete={
+          lightboxGroup?.kind === "results" && selectedConversation
+            ? (index) => {
+                const item = lightboxImages[index];
+                const imageId = item?.imageId ?? item?.id;
+                if (!imageId || !lightboxGroup) return;
+                void handleDeleteLightboxImage(selectedConversation.id, lightboxGroup.turnId, imageId);
+                // 删完把这张从灯箱列表里摘掉，别让主人盯着一个空白
+                const remaining = lightboxImages.filter((_, i) => i !== index);
+                if (remaining.length === 0) {
+                  setLightboxOpen(false);
+                  return;
+                }
+                setLightboxImages(remaining);
+                setLightboxIndex(Math.min(index, remaining.length - 1));
               }
             : undefined
         }

@@ -202,6 +202,7 @@ export function ImageResults({
       {selectedConversation.turns.map((turn, turnIndex) => {
         const referenceLightboxImages = buildTurnLightboxImages(turn, "references");
         const successfulTurnImages = buildTurnLightboxImages(turn, "results");
+        const isTurnInProgress = turn.status === "queued" || turn.status === "generating";
 
         return (
           <div key={turn.id} className="flex flex-col gap-3 sm:gap-4">
@@ -214,26 +215,6 @@ export function ImageResults({
                     {getTurnStatusLabel(turn.status)}
                   </span>
                   <span>{formatConversationTime(turn.createdAt)}</span>
-                  <span className="ml-auto flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
-                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
-                    >
-                      <Sparkles className="size-3" />
-                      <span className="hidden sm:inline">复用配置</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeletePrompt(selectedConversation.id, turn.id)}
-                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
-                      aria-label="删除本轮"
-                      title="删除本轮"
-                    >
-                      <Trash2 className="size-3" />
-                      <span className="hidden sm:inline">删除本轮</span>
-                    </button>
-                  </span>
                 </div>
                 <div className="whitespace-pre-line break-words text-left text-[14px] leading-6 text-stone-900 sm:text-[15px] sm:leading-7">{turn.prompt}</div>
               </div>
@@ -505,15 +486,40 @@ export function ImageResults({
                     >
                       {getTurnStatusLabel(turn.status)}
                     </span>
-                    <span className="ml-auto flex items-center gap-1">
+                    <span className="ml-auto flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+                        title="复用配置"
+                        aria-label="复用配置"
+                      >
+                        <Sparkles className="size-3" />
+                        <span className="hidden sm:inline">复用配置</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => void onRegenerateTurn(selectedConversation.id, turn.id)}
-                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+                        title="全部重新生成"
+                        aria-label="全部重新生成"
                       >
                         <RotateCcw className="size-3" />
                         <span className="hidden sm:inline">全部重新生成</span>
                       </button>
+                      {/* 生成中的轮次先不给删除入口，等出结果再操作 */}
+                      {!isTurnInProgress ? (
+                        <button
+                          type="button"
+                          onClick={() => onDeletePrompt(selectedConversation.id, turn.id)}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
+                          aria-label="删除本轮"
+                          title="删除本轮"
+                        >
+                          <Trash2 className="size-3" />
+                          <span className="hidden sm:inline">删除本轮</span>
+                        </button>
+                      ) : null}
                     </span>
                   </div>
 

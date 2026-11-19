@@ -590,7 +590,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageHeight, setImageHeight] = useState("1024");
   const [imageQuality, setImageQuality] = useState("auto");
   const [imageModel, setImageModel] = useState<ImageModel>("gpt-image-2");
-  const [globalImageModel, setGlobalImageModel] = useState<ImageModel>("gpt-image-2");
   const [imageModels, setImageModels] = useState<ImageModel[]>(FALLBACK_IMAGE_MODELS);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -878,9 +877,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         setImageModels(available);
         const storedModel = typeof window !== "undefined" ? window.localStorage.getItem(IMAGE_MODEL_STORAGE_KEY) : null;
         const configuredDefaultModel = String(catalog.default_image_model || "").trim();
-        if (configuredDefaultModel && available.includes(configuredDefaultModel)) {
-          setGlobalImageModel(configuredDefaultModel);
-        }
         setImageModel((current) => {
           if (configuredDefaultModel && available.includes(configuredDefaultModel)) {
             return configuredDefaultModel;
@@ -1233,8 +1229,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const btn = scrollToLatestBtnRef.current;
     if (btn) btn.style.display = "none";
     setSelectedConversationId(null);
-    setImageModel(globalImageModel);
-    resetComposer();
+    // 不清空提示词、参考图和生图配置，方便在新对话里接着改
     textareaRef.current?.focus();
   };
 

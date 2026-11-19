@@ -91,6 +91,14 @@ export function resolveSizePreset(ratio: string, tier: string) {
   return matched ? { width: matched.width, height: matched.height } : null;
 }
 
+// 输入框可拖动调高：最小 76px（约三行），最大不超过视口的一半
+const COMPOSER_MIN_HEIGHT = 76;
+const COMPOSER_HEIGHT_STORAGE_KEY = "chatgpt2api:image_composer_height";
+function clampComposerHeight(value: number) {
+  const max = typeof window === "undefined" ? 480 : Math.max(COMPOSER_MIN_HEIGHT, Math.round(window.innerHeight * 0.5));
+  return Math.min(max, Math.max(COMPOSER_MIN_HEIGHT, Math.round(value)));
+}
+
 export function ImageComposer({
   prompt,
   imageCount,
@@ -127,6 +135,14 @@ export function ImageComposer({
   const [sizeMenuPos, setSizeMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const sizeMenuRef = useRef<HTMLDivElement>(null);
   const sizeMenuBtnRef = useRef<HTMLButtonElement>(null);
+  const [textareaHeight, setTextareaHeight] = useState<number>(() => {
+    if (typeof window === "undefined") {
+      return COMPOSER_MIN_HEIGHT;
+    }
+    const stored = Number(window.localStorage.getItem(COMPOSER_HEIGHT_STORAGE_KEY));
+    return Number.isFinite(stored) && stored >= COMPOSER_MIN_HEIGHT ? stored : COMPOSER_MIN_HEIGHT;
+  });
+  const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const lightboxImages = useMemo(
     () => [
       ...referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.url || image.dataUrl || "" })),
@@ -190,6 +206,54 @@ export function ImageComposer({
 
     event.preventDefault();
     void onReferenceImageChange(imageFiles);
+  };
+
+  // 拖拽输入框下沿调整高度：鼠标和触摸共用一套逻辑
+  const handleResizeMove = (clientY: number) => {
+    const state = resizeStateRef.current;
+    if (!state) return;
+    setTextareaHeight(clampComposerHeight(state.startHeight + (state.startY - clientY)));
+  };
+
+  const handleResizeEnd = () => {
+    if (!resizeStateRef.current) return;
+    resizeStateRef.current = null;
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+    setTextareaHeight((current) => {
+      const next = clampComposerHeight(current);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(COMPOSER_HEIGHT_STORAGE_KEY, String(next));
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => handleResizeMove(event.clientY);
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (touch) handleResizeMove(touch.clientY);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", handleResizeEnd);
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchend", handleResizeEnd);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", handleResizeEnd);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", handleResizeEnd);
+    };
+  }, []);
+
+  const handleResizeStart = (event: React.MouseEvent | React.TouchEvent) => {
+    const clientY = "touches" in event ? event.touches[0]?.clientY : event.clientY;
+    if (clientY == null) return;
+    event.preventDefault();
+    resizeStateRef.current = { startY: clientY, startHeight: textareaHeight };
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
   };
 
   const handleComposerDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -333,8 +397,20 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="min-h-[76px] resize-none rounded-[24px] border-0 bg-transparent px-4 pt-3 pb-2 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 dark:text-stone-100 dark:placeholder:text-stone-500 sm:min-h-[124px] sm:rounded-[32px] sm:px-5 sm:pt-4 sm:pb-14 sm:leading-7"
+              style={{ height: `${textareaHeight}px` }}
+              className="resize-none rounded-[24px] border-0 bg-transparent px-4 pt-3 pb-2 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 dark:text-stone-100 dark:placeholder:text-stone-500 sm:rounded-[32px] sm:px-5 sm:pt-4 sm:pb-14 sm:leading-7"
             />
+            {/* 拖动手柄：PC 上工具栏浮在底部，手柄要浮在它上面才能点到 */}
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="拖动调整输入框高度"
+              onMouseDown={handleResizeStart}
+              onTouchStart={handleResizeStart}
+              className="group relative z-30 flex h-4 w-full cursor-ns-resize items-center justify-center touch-none sm:absolute sm:inset-x-0 sm:bottom-[3.25rem]"
+            >
+              <span className="h-1 w-10 rounded-full bg-stone-200 transition group-hover:bg-stone-400 group-active:bg-stone-400" />
+            </div>
             {isDraggingImage ? (
               <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[24px] border-2 border-dashed border-stone-900 bg-white/85 text-sm font-medium text-stone-900 backdrop-blur-[1px] sm:rounded-[32px]">
                 <div className="flex items-center gap-2 rounded-full bg-stone-950 px-4 py-2 text-white shadow-lg">

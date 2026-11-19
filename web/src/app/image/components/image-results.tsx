@@ -35,7 +35,6 @@ type ImageResultsProps = {
   onContinueEdit: (conversationId: string, image: StoredImage | StoredReferenceImage) => void;
   onAnnotateImage: (conversationId: string, image: StoredImage, source: string) => void;
   onDeletePrompt: (conversationId: string, turnId: string) => void;
-  onDeleteResults: (conversationId: string, turnId: string) => void;
   onReuseTurnConfig: (conversationId: string, turnId: string) => void | Promise<void>;
   onRegenerateTurn: (conversationId: string, turnId: string) => void | Promise<void>;
   onRetryImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
@@ -142,7 +141,6 @@ export function ImageResults({
   onContinueEdit,
   onAnnotateImage,
   onDeletePrompt,
-  onDeleteResults,
   onReuseTurnConfig,
   onRegenerateTurn,
   onRetryImage,
@@ -200,7 +198,7 @@ export function ImageResults({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 sm:gap-8">
+    <div className="mx-auto flex w-full max-w-[980px] flex-col gap-6 sm:gap-10">
       {selectedConversation.turns.map((turn, turnIndex) => {
         const referenceLightboxImages = buildTurnLightboxImages(turn, "references");
         const successfulTurnImages = buildTurnLightboxImages(turn, "results");
@@ -208,40 +206,36 @@ export function ImageResults({
         return (
           <div key={turn.id} className="flex flex-col gap-3 sm:gap-4">
             {!turn.promptDeleted ? (
-              <div className="flex justify-end">
-                <div className="max-w-[90%] px-1 py-1 text-[14px] leading-6 text-stone-900 sm:max-w-[82%] sm:text-[15px] sm:leading-7">
-                  <div className="mb-1.5 flex flex-wrap items-center justify-end gap-2 text-[11px] text-stone-400 sm:mb-2">
-                    <span>第 {turnIndex + 1} 轮</span>
-                    <span>
-                      {turn.mode === "edit" ? "编辑图" : "文生图"}
-                    </span>
-                    <span className={cn(turn.status === "queued" && "font-medium text-amber-600")}>
-                      {getTurnStatusLabel(turn.status)}
-                    </span>
-                    <span>{formatConversationTime(turn.createdAt)}</span>
-                    <span className="flex items-center gap-1.5 text-stone-500">
-                      <button
-                        type="button"
-                        onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
-                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-200 hover:text-stone-900"
-                      >
-                        <Sparkles className="size-3" />
-                        <span className="hidden sm:inline">复用配置</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeletePrompt(selectedConversation.id, turn.id)}
-                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
-                        aria-label="删除提示词记录"
-                        title="删除提示词记录"
-                      >
-                        <Trash2 className="size-3" />
-                        <span className="hidden sm:inline">删除提示</span>
-                      </button>
-                    </span>
-                  </div>
-                  <div className="whitespace-pre-line break-words text-right">{turn.prompt}</div>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-stone-400">
+                  <span className="font-medium text-stone-500">第 {turnIndex + 1} 轮</span>
+                  <span>{turn.mode === "edit" ? "编辑图" : "文生图"}</span>
+                  <span className={cn(turn.status === "queued" && "font-medium text-amber-600")}>
+                    {getTurnStatusLabel(turn.status)}
+                  </span>
+                  <span>{formatConversationTime(turn.createdAt)}</span>
+                  <span className="ml-auto flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+                    >
+                      <Sparkles className="size-3" />
+                      <span className="hidden sm:inline">复用配置</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeletePrompt(selectedConversation.id, turn.id)}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
+                      aria-label="删除本轮"
+                      title="删除本轮"
+                    >
+                      <Trash2 className="size-3" />
+                      <span className="hidden sm:inline">删除本轮</span>
+                    </button>
+                  </span>
                 </div>
+                <div className="whitespace-pre-line break-words text-left text-[14px] leading-6 text-stone-900 sm:text-[15px] sm:leading-7">{turn.prompt}</div>
               </div>
             ) : null}
 
@@ -249,15 +243,15 @@ export function ImageResults({
               <div className="flex justify-start">
                 <div className="w-full p-1">
                   {turn.referenceImages.length > 0 ? (
-                    <div className="mb-4 flex flex-col items-end">
-                      <div className="mb-3 text-xs font-medium text-stone-500">本轮参考图</div>
-                      <div className="flex flex-wrap justify-end gap-3">
+                    <div className="mb-5 flex flex-col items-start">
+                      <div className="mb-3 text-[11px] font-medium uppercase tracking-wide text-stone-400">本轮参考图</div>
+                      <div className="flex flex-wrap justify-start gap-3">
                         {turn.referenceImages.map((image, index) => (
-                          <div key={`${turn.id}-${image.name}-${index}`} className="flex flex-col items-end gap-2">
+                          <div key={`${turn.id}-${image.name}-${index}`} className="flex flex-col items-start gap-2">
                             <button
                               type="button"
                               onClick={() => onOpenLightbox({ turnId: turn.id, kind: "references", images: referenceLightboxImages, index })}
-                              className="group relative h-24 w-24 overflow-hidden border border-stone-200/80 bg-stone-100/60 text-left transition hover:border-stone-300"
+                              className="group relative h-24 w-24 overflow-hidden rounded-xl bg-stone-100/60 text-left ring-1 ring-stone-200/70 transition hover:ring-stone-300"
                               aria-label={`预览参考图 ${image.name || index + 1}`}
                             >
                               <img
@@ -267,22 +261,22 @@ export function ImageResults({
                               />
                             </button>
                             <Button
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
-                              className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                              className="rounded-full text-[11px] text-stone-500 hover:bg-stone-100 hover:text-stone-900"
                               onClick={() => onContinueEdit(selectedConversation.id, image)}
                             >
-                              <Sparkles className="size-4" />
+                              <Sparkles className="size-3" />
                               引用
                             </Button>
                           </div>
                         ))}
                         {turn.maskImages.map((mask, index) => (
-                          <div key={`${turn.id}-mask-${index}`} className="flex flex-col items-end gap-2">
+                          <div key={`${turn.id}-mask-${index}`} className="flex flex-col items-start gap-2">
                             <button
                               type="button"
                               onClick={() => onOpenLightbox({ turnId: turn.id, kind: "references", images: referenceLightboxImages, index: turn.referenceImages.length + index })}
-                              className="group relative h-24 w-24 overflow-hidden border border-stone-200/80 bg-stone-300 text-left transition hover:border-stone-400"
+                              className="group relative h-24 w-24 overflow-hidden rounded-xl bg-stone-200/70 bg-[length:12px_12px] bg-[linear-gradient(45deg,#d6d3d1_25%,transparent_25%,transparent_75%,#d6d3d1_75%),linear-gradient(45deg,#d6d3d1_25%,transparent_25%,transparent_75%,#d6d3d1_75%)] bg-[position:0_0,6px_6px] text-left ring-1 ring-stone-200 transition hover:ring-stone-300"
                               aria-label={`预览标注遮罩 ${index + 1}`}
                             >
                               <img
@@ -298,7 +292,7 @@ export function ImageResults({
                     </div>
                   ) : null}
 
-                  <div className="grid grid-cols-3 gap-2 sm:block sm:columns-2 sm:gap-4 sm:space-y-4 xl:columns-3">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
                     {turn.images.map((image, index) => {
                       const imageSrc = image.status === "success" ? getStoredImageSrc(image) : "";
                       if (image.status === "success" && imageSrc) {
@@ -312,12 +306,12 @@ export function ImageResults({
                         return (
                           <div
                             key={image.id}
-                            className="break-inside-avoid"
+                            className="group overflow-hidden rounded-2xl bg-white ring-1 ring-stone-200/70 transition hover:ring-stone-300/90 hover:shadow-[0_10px_40px_-24px_rgba(15,23,42,0.35)]"
                           >
                             <LazyImage
                               src={imageSrc}
                               alt={`Generated result ${index + 1}`}
-                              className="group block aspect-square w-full cursor-zoom-in overflow-hidden rounded-xl sm:aspect-auto"
+                              className="block aspect-square w-full cursor-zoom-in overflow-hidden sm:aspect-auto"
                               onLoad={(event) => {
                                 updateImageDimensions(
                                   image.id,
@@ -327,34 +321,34 @@ export function ImageResults({
                               }}
                               onOpen={() => onOpenLightbox({ turnId: turn.id, kind: "results", images: successfulTurnImages, index: currentIndex })}
                             />
-                            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-0.5 py-1 text-[10px] sm:px-3 sm:py-2.5 sm:text-xs">
-                              <div data-slot="image-result-meta" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-stone-500">
-                                <span>结果 {index + 1}</span>
-                                {image.durationMs != null ? <span className="whitespace-nowrap text-stone-400">{formatDuration(image.durationMs)}</span> : null}
-                                {imageMeta ? <span className="whitespace-nowrap text-stone-400">{imageMeta}</span> : null}
+                            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-t border-stone-100 px-3 py-2.5 text-[10px] sm:text-[11px]">
+                              <div data-slot="image-result-meta" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-stone-400">
+                                <span className="font-medium text-stone-500">结果 {index + 1}</span>
+                                {image.durationMs != null ? <span className="whitespace-nowrap">{formatDuration(image.durationMs)}</span> : null}
+                                {imageMeta ? <span className="whitespace-nowrap">{imageMeta}</span> : null}
                               </div>
-                              <div data-slot="image-result-actions" className="flex items-center gap-1">
+                              <div data-slot="image-result-actions" className="flex items-center gap-0.5">
                                 {imageUrl ? (
                                   <Button
-                                    variant="outline"
+                                    variant="ghost"
                                     size="sm"
                                     className={cn(
-                                      "h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] hover:bg-amber-50 sm:w-fit sm:px-2 sm:text-[11px]",
-                                      favorited ? "border-amber-200 text-amber-600" : "text-stone-700",
+                                      "h-7 w-7 rounded-lg px-0 text-[11px] hover:bg-stone-100 sm:w-fit sm:px-2",
+                                      favorited ? "bg-amber-50 text-amber-600 hover:bg-amber-100" : "text-stone-500 hover:text-stone-900",
                                     )}
                                     onClick={() => void onToggleFavorite(imageUrl)}
                                     title={favorited ? "取消收藏" : "收藏"}
                                     aria-label={favorited ? "取消收藏" : "收藏"}
                                     aria-pressed={favorited}
                                   >
-                                    <Star className={cn("size-2.5 sm:size-3", favorited && "fill-amber-400 text-amber-500")} />
+                                    <Star className={cn("size-3", favorited && "fill-amber-500 text-amber-500")} />
                                     <span className="hidden sm:inline">{favorited ? "已收藏" : "收藏"}</span>
                                   </Button>
                                 ) : null}
                                 <Button
-                                  variant="outline"
+                                  variant="ghost"
                                   size="sm"
-                                  className="h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2 sm:text-[11px]"
+                                  className="h-7 w-7 rounded-lg px-0 text-[11px] text-stone-500 hover:bg-stone-100 hover:text-stone-900 sm:w-fit sm:px-2"
                                   onClick={() => onAnnotateImage(
                                     selectedConversation.id,
                                     image,
@@ -363,29 +357,29 @@ export function ImageResults({
                                   title="编辑"
                                   aria-label="编辑"
                                 >
-                                  <Brush className="size-2.5 sm:size-3" />
+                                  <Brush className="size-3" />
                                   <span className="hidden sm:inline">编辑</span>
                                 </Button>
                                 <Button
-                                  variant="outline"
+                                  variant="ghost"
                                   size="sm"
-                                  className="h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2 sm:text-[11px]"
+                                  className="h-7 w-7 rounded-lg px-0 text-[11px] text-stone-500 hover:bg-stone-100 hover:text-stone-900 sm:w-fit sm:px-2"
                                   onClick={() => onContinueEdit(selectedConversation.id, image)}
                                   title="引用"
                                   aria-label="引用"
                                 >
-                                  <Sparkles className="size-2.5 sm:size-3" />
+                                  <Sparkles className="size-3" />
                                   <span className="hidden sm:inline">引用</span>
                                 </Button>
                                 <Button
-                                  variant="outline"
+                                  variant="ghost"
                                   size="sm"
-                                  className="h-6 w-6 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:w-fit sm:px-2 sm:text-[11px]"
+                                  className="h-7 w-7 rounded-lg px-0 text-[11px] text-stone-500 hover:bg-stone-100 hover:text-stone-900 sm:w-fit sm:px-2"
                                   onClick={() => void downloadStoredImage(image, index)}
                                   title="下载"
                                   aria-label="下载"
                                 >
-                                  <Download className="size-2.5 sm:size-3" />
+                                  <Download className="size-3" />
                                   <span className="hidden sm:inline">下载</span>
                                 </Button>
                               </div>
@@ -398,11 +392,11 @@ export function ImageResults({
                         const isTimeoutError = image.error?.includes("超时") && image.taskId;
                         const isRemoved = Boolean(image.removed);
                         return (
-                          <div key={image.id} className="break-inside-avoid">
+                          <div key={image.id} className="overflow-hidden rounded-2xl bg-white ring-1 ring-stone-200/70">
                             <div
                               className={cn(
-                                "overflow-hidden rounded-xl border",
-                                isRemoved ? "border-stone-200 bg-stone-50" : "border-rose-200 bg-rose-50",
+                                "overflow-hidden border-b",
+                                isRemoved ? "border-stone-100 bg-stone-50" : "border-rose-100 bg-rose-50",
                                 "aspect-square",
                                 turn.ratio === "1:1" && "sm:aspect-square",
                                 turn.ratio === "16:9" && "sm:aspect-video",
@@ -444,11 +438,10 @@ export function ImageResults({
                               </div>
                             </div>
                             </div>
-                            <div className="flex flex-col gap-1 px-0.5 py-1 text-[10px] sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:px-3 sm:py-3 sm:text-xs">
-                              <div className="min-w-0 text-stone-500">
-                                <span>结果 {index + 1}</span>
-                                {image.durationMs != null ? <span className="text-stone-400 sm:ml-2">{formatDuration(image.durationMs)}</span> : null}
-                                <span className="block text-transparent">-</span>
+                            <div className="flex items-center justify-between gap-2 px-3 py-2.5 text-[10px] sm:text-[11px]">
+                              <div className="min-w-0 flex items-center gap-2 text-stone-400">
+                                <span className="font-medium text-stone-500">结果 {index + 1}</span>
+                                {image.durationMs != null ? <span>{formatDuration(image.durationMs)}</span> : null}
                               </div>
                             </div>
                           </div>
@@ -466,10 +459,10 @@ export function ImageResults({
                           )
                         : null;
                       return (
-                        <div key={image.id} className="break-inside-avoid">
+                        <div key={image.id} className="overflow-hidden rounded-2xl bg-white ring-1 ring-stone-200/70">
                           <div
                             className={cn(
-                              "overflow-hidden rounded-xl border border-stone-200/80 bg-stone-100/80 relative",
+                              "relative overflow-hidden border-b border-stone-100 bg-stone-50",
                               turn.ratio === "1:1" && "aspect-square",
                               turn.ratio === "16:9" && "aspect-video",
                               turn.ratio === "9:16" && "aspect-[9/16]",
@@ -494,42 +487,32 @@ export function ImageResults({
                           </div>
                           </div>
                           {elapsedDisplay != null && (
-                            <div className="px-0.5 py-1 text-[10px] text-stone-400 sm:px-3 sm:py-3 sm:text-xs">{elapsedDisplay}</div>
+                            <div className="px-3 py-2.5 text-[10px] text-stone-400 sm:text-[11px]">{elapsedDisplay}</div>
                           )}
                         </div>
                       );
                     })}
                   </div>
 
-                  <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 sm:mb-4 sm:gap-2 sm:text-xs">
-                    <span className="rounded-full bg-stone-100 px-3 py-1">{turn.count} 张</span>
-                    <span className="rounded-full bg-stone-100 px-3 py-1">{turn.model}</span>
+                  <div className="mt-4 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 sm:gap-2 sm:text-xs">
+                    <span className="rounded-full bg-stone-100/80 px-3 py-1">{turn.count} 张</span>
+                    <span className="rounded-full bg-stone-100/80 px-3 py-1">{turn.model}</span>
                     <span
                       className={cn(
                         "rounded-full px-3 py-1",
-                        turn.status === "queued" ? "bg-amber-50 text-amber-700" : "bg-stone-100",
+                        turn.status === "queued" ? "bg-amber-50 text-amber-700" : "bg-stone-100/80",
                       )}
                     >
                       {getTurnStatusLabel(turn.status)}
                     </span>
-                    <span className="ml-auto flex items-center gap-1.5">
+                    <span className="ml-auto flex items-center gap-1">
                       <button
                         type="button"
                         onClick={() => void onRegenerateTurn(selectedConversation.id, turn.id)}
-                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-500 transition hover:bg-stone-200 hover:text-stone-900"
+                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
                       >
                         <RotateCcw className="size-3" />
                         <span className="hidden sm:inline">全部重新生成</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteResults(selectedConversation.id, turn.id)}
-                        className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-400 transition hover:bg-rose-50 hover:text-rose-500"
-                        aria-label="删除生成结果"
-                        title="删除生成结果"
-                      >
-                        <Trash2 className="size-3" />
-                        <span className="hidden sm:inline">删除结果</span>
                       </button>
                     </span>
                   </div>

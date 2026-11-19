@@ -268,6 +268,17 @@ function getTurnResultSources(turn: ImageTurn | null | undefined) {
   return turn?.images.flatMap((image) => (image.url ? [image.url] : [])) || [];
 }
 
+/** 把结果图 URL 还原成图片管理里的相对路径，用于按路径删除磁盘文件。 */
+function _storageRelFromResultUrl(url: string | undefined) {
+  const text = String(url || "").split("?")[0].split("#")[0];
+  const marker = "/images/";
+  const index = text.indexOf(marker);
+  if (index >= 0) {
+    return decodeURIComponent(text.slice(index + marker.length));
+  }
+  return "";
+}
+
 function getConversationResultSources(conversation: ImageConversation | null | undefined) {
   return conversation?.turns.flatMap(getTurnResultSources) || [];
 }
@@ -603,8 +614,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const scrollToLatestBtnRef = useRef<HTMLButtonElement>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<
     | { type: "one"; id: string }
-    | { type: "prompt"; conversationId: string; turnId: string }
-    | { type: "results"; conversationId: string; turnId: string }
+    | { type: "turn"; conversationId: string; turnId: string }
     | null
   >(null);
 
@@ -681,21 +691,17 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [conversations],
   );
   const deleteConfirmTitle =
-    deleteConfirm?.type === "prompt"
-      ? "删除提示词记录"
-      : deleteConfirm?.type === "results"
-        ? "删除生成结果"
-        : deleteConfirm?.type === "one"
-          ? "删除对话"
-          : "";
+    deleteConfirm?.type === "turn"
+      ? "删除本轮"
+      : deleteConfirm?.type === "one"
+        ? "删除对话"
+        : "";
   const deleteConfirmDescription =
-    deleteConfirm?.type === "prompt"
-      ? "确认删除这条提示词记录吗？对应生成结果会保留。"
-      : deleteConfirm?.type === "results"
-        ? "确认删除这条生成结果吗？对应提示词记录会保留。"
-        : deleteConfirm?.type === "one"
-          ? "仅删除会话会保留已生成的图片（可在图片管理里找到）；删除会话和图片会一并移除这些图片文件。"
-          : "";
+    deleteConfirm?.type === "turn"
+      ? "「仅删除记录」会从会话里移除本轮的提示词、参考图和结果，但图片文件保留在图片管理里；「删除本轮和图片」会连磁盘上的图片一起删掉，无法恢复。"
+      : deleteConfirm?.type === "one"
+        ? "仅删除会话会保留已生成的图片（可在图片管理里找到）；删除会话和图片会一并移除这些图片文件。"
+        : "";
   const pendingBatchImageCount = pendingBatch ? pendingBatch.prompts.length * pendingBatch.count : 0;
   const pendingBatchOverLimit = pendingBatch
     ? pendingBatch.prompts.length > BATCH_SOFT_LIMIT_PROMPTS || pendingBatchImageCount > BATCH_SOFT_LIMIT_IMAGES
@@ -1275,45 +1281,31 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
-  const handleDeleteTurnPart = async (conversationId: string, turnId: string, part: "prompt" | "results") => {
+  // 删除整轮：提示词、参考图和结果一起处理，不再拆成"删提示词/删结果"两个入口
+  const handleDeleteTurn = async (
+    conversationId: string,
+    turnId: string,
+    options: { withImages?: boolean } = {},
+  ) => {
     const conversation = hydratedConversationsRef.current.get(conversationId) ?? null;
     if (!conversation) {
       return;
     }
-    const removedSources = part === "results"
-      ? getTurnResultSources(conversation.turns.find((turn) => turn.id === turnId))
-      : [];
+    const targetTurn = conversation.turns.find((turn) => turn.id === turnId);
+    const removedSources = getTurnResultSources(targetTurn);
 
-    const turns = conversation.turns
-      .map((turn) => {
-        if (turn.id !== turnId) {
-          return turn;
-        }
-        const images =
-          part === "results"
-            ? turn.images.map((image) => ({ id: image.id, status: "error" as const, error: "生成结果已删除" }))
-            : turn.images;
-        const derived =
-          part === "results"
-            ? deriveTurnStatus({
-                ...turn,
-                images,
-              })
-            : { status: turn.status, error: turn.error };
-        const nextTurn = {
-          ...turn,
-          prompt: part === "prompt" ? "" : turn.prompt,
-          promptDeleted: part === "prompt" ? true : turn.promptDeleted,
-          resultsDeleted: part === "results" ? true : turn.resultsDeleted,
-          ...derived,
-          images,
-        };
-        return nextTurn.promptDeleted && nextTurn.resultsDeleted ? null : nextTurn;
-      })
-      .filter((turn): turn is ImageTurn => Boolean(turn));
+    // 连图片一起删：先删磁盘文件（此时会话还留着，后端才能反查到图片归属）
+    if (options.withImages && removedSources.length > 0) {
+      try {
+        await deleteManagedImages({ paths: removedSources.map(_storageRelFromResultUrl).filter(Boolean) });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "删除图片失败");
+      }
+    }
 
+    const turns = conversation.turns.filter((turn) => turn.id !== turnId);
     if (turns.length === 0) {
-      await handleDeleteConversation(conversationId);
+      await handleDeleteConversation(conversationId, options);
       return;
     }
 
@@ -1395,12 +1387,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setDeleteConfirm({ type: "one", id });
   };
 
-  const openDeletePromptConfirm = (conversationId: string, turnId: string) => {
-    setDeleteConfirm({ type: "prompt", conversationId, turnId });
-  };
-
-  const openDeleteResultsConfirm = (conversationId: string, turnId: string) => {
-    setDeleteConfirm({ type: "results", conversationId, turnId });
+  const openDeleteTurnConfirm = (conversationId: string, turnId: string) => {
+    setDeleteConfirm({ type: "turn", conversationId, turnId });
   };
 
   const handleConfirmDelete = async (mode: "default" | "withImages" = "default") => {
@@ -1409,8 +1397,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     if (!target) {
       return;
     }
-    if (target.type === "prompt" || target.type === "results") {
-      await handleDeleteTurnPart(target.conversationId, target.turnId, target.type);
+    if (target.type === "turn") {
+      await handleDeleteTurn(target.conversationId, target.turnId, { withImages: mode === "withImages" });
       return;
     }
     await handleDeleteConversation(target.id, { withImages: mode === "withImages" });
@@ -2461,7 +2449,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <div
               ref={resultsViewportRef}
               onScroll={handleResultsScroll}
-              className="hide-scrollbar h-full overscroll-contain overflow-y-auto px-1 py-2 sm:px-4 sm:py-4"
+              className="h-full overscroll-contain overflow-y-auto px-1 py-2 sm:px-4 sm:py-4"
               style={{ contain: "layout style paint" }}
             >
               {isConversationLoading && selectedConversationId ? (
@@ -2475,8 +2463,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   onOpenLightbox={openLightbox}
                   onContinueEdit={handleContinueEdit}
                   onAnnotateImage={handleAnnotateImage}
-                  onDeletePrompt={openDeletePromptConfirm}
-                  onDeleteResults={openDeleteResultsConfirm}
+                  onDeletePrompt={openDeleteTurnConfirm}
                   onReuseTurnConfig={handleReuseTurnConfig}
                   onRegenerateTurn={handleRegenerateTurn}
                   onRetryImage={handleRetryImage}
@@ -2655,9 +2642,21 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   </Button>
                 </>
               ) : (
-                <Button className="bg-rose-600 text-white hover:bg-rose-700" onClick={() => void handleConfirmDelete()}>
-                  确认删除
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    className="border-stone-200"
+                    onClick={() => void handleConfirmDelete()}
+                  >
+                    仅删除记录
+                  </Button>
+                  <Button
+                    className="bg-rose-600 text-white hover:bg-rose-700"
+                    onClick={() => void handleConfirmDelete("withImages")}
+                  >
+                    删除本轮和图片
+                  </Button>
+                </>
               )}
             </DialogFooter>
           </DialogContent>

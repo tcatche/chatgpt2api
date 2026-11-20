@@ -167,26 +167,49 @@ def cleanup_image_thumbnails() -> int:
     _cleanup_empty_dirs(thumbnails_root)
     return removed
 
-def _conversation_image_index() -> dict[str, dict[str, str]]:
-    """文件名 → 所属会话；同一文件命中多个会话时取最近更新的那个。"""
-    index: dict[str, dict[str, str]] = {}
-    for ref in image_conversation_service.list_image_refs():
+def _normalize_rel(value: object) -> str:
+    """把路径统一成安全的 posix 相对路径；含 `..` 的段直接丢弃，绝不逃出图片根目录。"""
+    text = str(value or "").replace("\\", "/").strip().strip("/")
+    if not text:
+        return ""
+    parts = [part for part in text.split("/") if part and part not in {".", ".."}]
+    return "/".join(parts)
+
+
+def _conversation_image_indexes(refs: list[dict[str, object]]) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    """归属映射：(相对路径 → 会话, 文件名 → 会话)。路径优先，文件名兜底；
+    同一 key 命中多个会话时取最近更新的那个。"""
+    by_path: dict[str, dict[str, str]] = {}
+    by_name: dict[str, dict[str, str]] = {}
+    for ref in refs:
         entry = {
             "conversation_id": str(ref.get("conversation_id") or ""),
             "conversation_title": str(ref.get("title") or ""),
             "updated_at": str(ref.get("updated_at") or ""),
         }
+        for rel in ref.get("paths") or []:
+            key = _normalize_rel(rel)
+            if not key:
+                continue
+            current = by_path.get(key)
+            if current is None or entry["updated_at"] > current.get("updated_at", ""):
+                by_path[key] = entry
         for filename in ref.get("filenames") or []:
             name = str(filename)
-            current = index.get(name)
+            current = by_name.get(name)
             if current is None or entry["updated_at"] > current.get("updated_at", ""):
-                index[name] = entry
-    return index
+                by_name[name] = entry
+    return by_path, by_name
 
 
-def _with_conversation(item: dict[str, object], index: dict[str, dict[str, str]]) -> dict[str, object]:
-    name = str(item.get("name") or Path(str(item.get("path") or "")).name)
-    entry = index.get(name)
+def _with_conversation(
+    item: dict[str, object],
+    by_path: dict[str, dict[str, str]],
+    by_name: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    rel = _normalize_rel(str(item.get("path") or ""))
+    name = str(item.get("name") or Path(rel).name)
+    entry = by_path.get(rel) or by_name.get(name)
     if entry is None:
         return {**item, "conversation_id": "", "conversation_title": ""}
     return {
@@ -206,25 +229,32 @@ def _matches_conversation(item: dict[str, object], conversation_id: str) -> bool
 
 
 def _conversation_summaries(
-    index: dict[str, dict[str, str]],
+    refs: list[dict[str, object]],
     all_items: list[dict[str, object]],
     date_items: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """下拉选项：成员与筛选无关（只要有图就出现），计数按当前日期范围。"""
+    """下拉选项：成员与筛选无关（磁盘上仍有它引用的图才出现），计数按当前日期范围。"""
+    existing_rels = {_normalize_rel(str(item.get("path") or "")) for item in all_items}
     existing_names = {str(item.get("name") or "") for item in all_items}
     summary: dict[str, dict[str, object]] = {}
-    for filename, entry in index.items():
-        if filename not in existing_names:
-            continue
-        conversation_id = entry["conversation_id"]
+    for ref in refs:
+        conversation_id = str(ref.get("conversation_id") or "")
         if not conversation_id or conversation_id in summary:
+            continue
+        referenced = [_normalize_rel(rel) for rel in ref.get("paths") or []]
+        referenced_names = [str(name) for name in ref.get("filenames") or []]
+        still_on_disk = (
+            any(rel in existing_rels for rel in referenced)
+            or any(name in existing_names for name in referenced_names)
+        )
+        if not still_on_disk:
             continue
         summary[conversation_id] = {
             "id": conversation_id,
-            "title": entry["conversation_title"],
+            "title": str(ref.get("title") or ""),
             "image_count": 0,
             "image_total": 0,
-            "updated_at": entry["updated_at"],
+            "updated_at": str(ref.get("updated_at") or ""),
         }
     for item in all_items:
         conversation_id = str(item.get("conversation_id") or "")
@@ -241,7 +271,8 @@ def list_images(base_url: str, start_date: str = "", end_date: str = "", convers
     config.cleanup_old_images()
     cleanup_image_thumbnails()
     all_tags = load_tags()
-    index = _conversation_image_index()
+    refs = image_conversation_service.list_image_refs()
+    by_path, by_name = _conversation_image_indexes(refs)
     all_items = [
         _with_conversation(
             {
@@ -250,7 +281,8 @@ def list_images(base_url: str, start_date: str = "", end_date: str = "", convers
                 "thumbnail_url": thumbnail_url(base_url, str(item["path"])),
                 "tags": all_tags.get(str(item["path"]), []),
             },
-            index,
+            by_path,
+            by_name,
         )
         for item in image_storage_service.list_items(base_url)
     ]
@@ -268,7 +300,7 @@ def list_images(base_url: str, start_date: str = "", end_date: str = "", convers
         groups.setdefault(str(item["date"]), []).append(item)
     return {
         "items": items,
-        "conversations": _conversation_summaries(index, all_items, date_items),
+        "conversations": _conversation_summaries(refs, all_items, date_items),
         "unlinked_count": unlinked_count,
         "unlinked_total": unlinked_total,
         "groups": [{"date": key, "items": value} for key, value in groups.items()],
@@ -277,13 +309,33 @@ def list_images(base_url: str, start_date: str = "", end_date: str = "", convers
 
 def delete_images(paths: list[str] | None = None, start_date: str = "", end_date: str = "", all_matching: bool = False, conversation_id: str = "") -> dict[str, int]:
     root = config.images_dir.resolve()
+    shared_rels: set[str] = set()
     if conversation_id:
-        index = _conversation_image_index()
-        targets = []
-        for item in image_storage_service.list_items(""):
-            enriched = _with_conversation(item, index)
-            if _matches_conversation(enriched, conversation_id):
-                targets.append(str(enriched["path"]))
+        # 按会话删除以「会话里实际引用的相对路径」为准：文件名或"唯一归属"索引都会在
+        # 同名文件（2026/10/a.png vs 2026/11/a.png）面前误判。
+        wanted_paths = {
+            rel
+            for rel in (_normalize_rel(p) for p in image_conversation_service.get_conversation_paths(conversation_id))
+            if rel
+        }
+        if conversation_id == UNLINKED_CONVERSATION_ID:
+            # 未关联：磁盘上存在、但任何会话都没有按路径引用的图片
+            referenced = image_conversation_service.all_referenced_paths()
+            targets = [
+                str(item["path"])
+                for item in image_storage_service.list_items("")
+                if _normalize_rel(str(item["path"])) not in referenced
+            ]
+        else:
+            # 相对路径被别的会话也引用时，只标记当前会话，不删磁盘文件
+            path_owners = image_conversation_service.count_path_owners()
+            shared_rels = {rel for rel in wanted_paths if path_owners.get(rel, 0) > 1}
+            wanted_paths -= shared_rels
+            targets = [
+                str(item["path"])
+                for item in image_storage_service.list_items("")
+                if _normalize_rel(str(item["path"])) in wanted_paths
+            ]
     elif all_matching:
         targets = [
             str(item["path"])
@@ -292,7 +344,7 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
     else:
         targets = paths or []
     removed = 0
-    removed_names: list[str] = []
+    removed_rels: list[str] = []
     for item in targets:
         path = (root / item).resolve()
         try:
@@ -301,17 +353,30 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
             continue
         if image_storage_service.delete(item):
             removed += 1
-            removed_names.append(Path(item).name)
+            removed_rels.append(_normalize_rel(item))
         for thumbnail in (_thumbnail_path(item), *_legacy_thumbnail_paths(item)):
             if thumbnail.is_file():
                 thumbnail.unlink()
         remove_tags(item)
     # 会话里引用的图已不存在，同步标记成「已删除」，避免留下打不开的坏图
-    if removed_names:
+    # （按相对路径精确匹配；未关联分支没有会话可标，跳过）
+    if removed_rels and conversation_id and conversation_id != UNLINKED_CONVERSATION_ID:
         try:
-            image_conversation_service.mark_images_removed(removed_names)
+            image_conversation_service.mark_images_removed(removed_rels, conversation_id)
         except Exception as exc:
             logger.error(f"标记会话图片已删除失败：{exc}")
+    elif removed_rels and not conversation_id:
+        # 按路径/日期删除时不知道会话，让服务自己扫全部引用者
+        try:
+            image_conversation_service.mark_images_removed(removed_rels)
+        except Exception as exc:
+            logger.error(f"标记会话图片已删除失败：{exc}")
+    # 共用文件不删磁盘，但仍要在当前会话里标记成「已删除」
+    if shared_rels and conversation_id and conversation_id != UNLINKED_CONVERSATION_ID:
+        try:
+            image_conversation_service.mark_images_removed(sorted(shared_rels), conversation_id)
+        except Exception as exc:
+            logger.error(f"标记共享图片已删除失败：{exc}")
     _cleanup_empty_dirs(root)
     _cleanup_empty_dirs(config.image_thumbnails_dir)
     return {"removed": removed}

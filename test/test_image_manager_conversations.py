@@ -155,6 +155,33 @@ class ImageListConversationTests(unittest.TestCase):
         storage = FakeStorage(items)
         conversations = mock.Mock()
         conversations.list_image_refs.return_value = refs
+
+        def _paths_of(conversation_id: str) -> list[str]:
+            # 测试里的 refs 只给文件名，这里映射成 "2026/10/13/<name>" 这样的相对路径
+            for ref in refs:
+                if str(ref.get("conversation_id")) == conversation_id:
+                    return [f"2026/10/13/{name}" for name in ref.get("filenames") or []]
+            return []
+
+        def _all_referenced() -> set[str]:
+            referenced: set[str] = set()
+            for ref in refs:
+                for name in ref.get("filenames") or []:
+                    referenced.add(f"2026/10/13/{name}")
+            return referenced
+
+        def _path_owners() -> dict[str, int]:
+            owners: dict[str, int] = {}
+            for ref in refs:
+                for name in ref.get("filenames") or []:
+                    rel = f"2026/10/13/{name}"
+                    owners[rel] = owners.get(rel, 0) + 1
+            return owners
+
+        conversations.get_conversation_paths.side_effect = _paths_of
+        conversations.all_referenced_paths.side_effect = _all_referenced
+        conversations.count_path_owners.side_effect = _path_owners
+        conversations.mark_images_removed.return_value = 0
         storage_patcher = mock.patch("services.image_service.image_storage_service", storage)
         storage_patcher.start()
         self.addCleanup(storage_patcher.stop)
@@ -246,6 +273,34 @@ class ImageListConversationTests(unittest.TestCase):
 
         self.assertEqual(removed, {"removed": 1})
         self.assertEqual(storage.deleted, ["2026/10/13/a.png"])
+
+    def test_delete_by_conversation_does_not_touch_same_name_in_other_dir(self) -> None:
+        # 会话只引用 2026/10/13/a.png，另一个目录的同名文件必须保留
+        refs = [
+            {"conversation_id": "c1", "title": "会话一", "updated_at": "2026-10-13T01:00:00.000Z", "filenames": ["a.png"]},
+        ]
+        storage = self.use(refs, [
+            storage_item("2026/10/13/a.png", "2026-10-13"),
+            storage_item("2026/11/20/a.png", "2026-11-20"),
+        ])
+
+        removed = image_service.delete_images(conversation_id="c1")
+
+        self.assertEqual(removed, {"removed": 1})
+        self.assertEqual(storage.deleted, ["2026/10/13/a.png"])
+
+    def test_delete_by_conversation_keeps_file_shared_with_other_conversation(self) -> None:
+        refs = [
+            {"conversation_id": "c1", "title": "会话一", "updated_at": "2026-10-13T02:00:00.000Z", "filenames": ["a.png"]},
+            {"conversation_id": "c2", "title": "会话二", "updated_at": "2026-10-13T01:00:00.000Z", "filenames": ["a.png"]},
+        ]
+        storage = self.use(refs, [storage_item("2026/10/13/a.png", "2026-10-13")])
+
+        removed = image_service.delete_images(conversation_id="c1")
+
+        # 文件还被 c2 用着，不能删磁盘文件
+        self.assertEqual(removed, {"removed": 0})
+        self.assertEqual(storage.deleted, [])
 
     def test_delete_images_by_unlinked(self) -> None:
         refs = [

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from services.config import DATA_DIR
+from services.image_tags_service import rel_from_public_url
 
 
 def _clean(value: object, default: str = "") -> str:
@@ -87,6 +88,7 @@ class ImageConversationService:
         for item in items:
             turns = item.get("turns") if isinstance(item.get("turns"), list) else []
             filenames: list[str] = []
+            paths: list[str] = []
             for turn in turns:
                 if not isinstance(turn, dict):
                     continue
@@ -94,11 +96,12 @@ class ImageConversationService:
                 if not isinstance(images, list):
                     continue
                 for image in images:
-                    if not isinstance(image, dict):
+                    if not isinstance(image, dict) or image.get("removed"):
                         continue
-                    name = image_filename_from_url(image.get("url"))
-                    if name:
-                        filenames.append(name)
+                    rel = rel_from_public_url(image.get("url"))
+                    if rel:
+                        paths.append(rel)
+                        filenames.append(Path(rel).name)
             if not filenames:
                 continue
             refs.append({
@@ -107,20 +110,88 @@ class ImageConversationService:
                 "owner_id": _clean(item.get("owner_id")),
                 "updated_at": _clean(item.get("updatedAt")),
                 "filenames": filenames,
+                "paths": paths,
             })
         return refs
 
-    def mark_images_removed(self, filenames: list[str]) -> int:
+    def get_conversation_paths(self, conversation_id: str) -> list[str]:
+        """取某个会话引用的结果图相对路径（精确到目录，避免同名文件误伤）。"""
+        target = _clean(conversation_id)
+        if not target:
+            return []
+        paths: list[str] = []
+        with self._lock:
+            items = list(self._items.values())
+        for item in items:
+            if _clean(item.get("id")) != target:
+                continue
+            turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+            for turn in turns:
+                if not isinstance(turn, dict):
+                    continue
+                images = turn.get("images") if isinstance(turn.get("images"), list) else []
+                for image in images:
+                    if not isinstance(image, dict) or image.get("removed"):
+                        continue
+                    rel = rel_from_public_url(image.get("url"))
+                    if rel:
+                        paths.append(rel)
+        return paths
+
+    def all_referenced_paths(self) -> set[str]:
+        """所有未删除的结果图相对路径集合，用于识别「未关联」的磁盘文件。"""
+        referenced: set[str] = set()
+        with self._lock:
+            items = list(self._items.values())
+        for item in items:
+            turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+            for turn in turns:
+                if not isinstance(turn, dict):
+                    continue
+                images = turn.get("images") if isinstance(turn.get("images"), list) else []
+                for image in images:
+                    if not isinstance(image, dict) or image.get("removed"):
+                        continue
+                    rel = rel_from_public_url(image.get("url"))
+                    if rel:
+                        referenced.add(rel)
+        return referenced
+
+    def count_path_owners(self) -> dict[str, int]:
+        """统计每个相对路径被多少个会话引用，用于按路径判定共用文件。"""
+        owners: dict[str, set[str]] = {}
+        with self._lock:
+            items = list(self._items.values())
+        for item in items:
+            conversation_id = _clean(item.get("id"))
+            turns = item.get("turns") if isinstance(item.get("turns"), list) else []
+            for turn in turns:
+                if not isinstance(turn, dict):
+                    continue
+                images = turn.get("images") if isinstance(turn.get("images"), list) else []
+                for image in images:
+                    if not isinstance(image, dict) or image.get("removed"):
+                        continue
+                    rel = rel_from_public_url(image.get("url"))
+                    if rel:
+                        owners.setdefault(rel, set()).add(conversation_id)
+        return {rel: len(ids) for rel, ids in owners.items()}
+
+    def mark_images_removed(self, rel_paths: list[str], conversation_id: str = "") -> int:
         """图片文件被删除后，把会话里引用它的结果图标记为已删除，避免留一个打不开的坏图。
 
-        只改图片状态，不动轮次里的其他信息；返回被标记的图片数量。
+        按相对路径精确匹配：同名文件在别的目录（文件还在）不会被误标。
+        只改图片状态，不动轮次里的其他信息；传 conversation_id 时只处理该会话。
         """
-        wanted = {name for name in (_clean(item) for item in filenames) if name}
+        wanted = {_clean(item).replace("\\", "/").strip("/") for item in rel_paths if _clean(item)}
         if not wanted:
             return 0
+        only_conversation = _clean(conversation_id)
         marked = 0
         with self._lock:
             for key, item in list(self._items.items()):
+                if only_conversation and _clean(item.get("id")) != only_conversation:
+                    continue
                 changed = False
                 turns = item.get("turns") if isinstance(item.get("turns"), list) else []
                 next_turns: list[Any] = []
@@ -134,15 +205,15 @@ class ImageConversationService:
                         if not isinstance(image, dict):
                             next_images.append(image)
                             continue
-                        name = image_filename_from_url(image.get("url"))
-                        if not name or name not in wanted or image.get("removed"):
+                        rel = rel_from_public_url(image.get("url"))
+                        if not rel or rel not in wanted or image.get("removed"):
                             next_images.append(image)
                             continue
                         next_images.append({
                             **image,
                             "status": "error",
                             "removed": True,
-                            "url": "",
+                            # 只标状态、保留 url：其他会话对同一文件的引用不受影响
                             "error": "图片已在图片管理中删除",
                         })
                         marked += 1

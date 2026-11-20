@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Brush, Clock3, Download, EyeOff, LoaderCircle, RotateCcw, Sparkles, Star, Trash2 } from "lucide-react";
+import { Brush, Clock3, Download, EyeOff, ImageOff, LoaderCircle, RotateCcw, Sparkles, Star, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
@@ -616,6 +616,7 @@ const LazyImage = memo(function LazyImage({ src, alt, className, onLoad, onOpen 
   onOpen?: () => void;
 }) {
   const [isVisible, setIsVisible] = useState(false);
+  const [isBroken, setIsBroken] = useState(false);
   const imgRef = useRef<HTMLDivElement>(null);
   const cachedSrc = useCachedImageSource(src, isVisible);
 
@@ -636,6 +637,18 @@ const LazyImage = memo(function LazyImage({ src, alt, className, onLoad, onOpen 
     return () => observer.disconnect();
   }, []);
 
+  // 图片被删或链接失效时，用占位块代替浏览器的裂图图标
+  if (isVisible && (!cachedSrc || isBroken)) {
+    return (
+      <div ref={imgRef} className="relative">
+        <div className={cn("flex flex-col items-center justify-center gap-1.5 bg-stone-100 text-stone-400", className)}>
+          <ImageOff className="size-5" />
+          <span className="text-[11px]">图片已失效</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={imgRef} className="relative">
       {isVisible && cachedSrc ? (
@@ -649,6 +662,7 @@ const LazyImage = memo(function LazyImage({ src, alt, className, onLoad, onOpen 
             alt={alt}
             className="block h-full w-full object-cover transition duration-200 group-hover:brightness-90 sm:h-auto sm:object-contain"
             onLoad={onLoad}
+            onError={() => setIsBroken(true)}
           />
         </button>
       ) : (

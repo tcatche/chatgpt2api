@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Star, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, ImageOff, Star, Trash2, X } from "lucide-react";
 
 import { useCachedImageSource } from "@/hooks/use-cached-image-source";
 import { resolveCachedImage } from "@/lib/image-cache";
@@ -125,6 +125,11 @@ export function ImageLightbox({
   const [isGesturing, setIsGesturing] = useState(false);
   const current = images[currentIndex];
   const currentImageSrc = useCachedImageSource(current?.src || "", open && Boolean(current));
+  // 切换图片或重新打开时重置加载失败标记
+  const [imageBroken, setImageBroken] = useState(false);
+  useEffect(() => {
+    setImageBroken(false);
+  }, [currentImageSrc]);
   const favorited = Boolean(isFavorite?.(currentIndex));
   const hasPrev = currentIndex > 0;
   const hasNext = currentIndex < images.length - 1;
@@ -445,7 +450,7 @@ export function ImageLightbox({
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchCancel}
           >
-            {currentImageSrc ? (
+            {currentImageSrc && !imageBroken ? (
               <img
                 src={currentImageSrc}
                 alt=""
@@ -462,8 +467,14 @@ export function ImageLightbox({
                   e.stopPropagation();
                   toggleZoom();
                 }}
+                onError={() => setImageBroken(true)}
                 draggable={false}
               />
+            ) : currentImageSrc ? (
+              <div className="flex h-[min(50vh,420px)] w-[min(70vw,520px)] flex-col items-center justify-center gap-3 rounded-xl bg-white/10 text-white/60">
+                <ImageOff className="size-10" />
+                <span className="text-sm">图片已失效或已被删除</span>
+              </div>
             ) : (
               <div className="h-[min(70vh,720px)] w-[min(80vw,720px)] animate-pulse rounded-lg bg-white/10" aria-label="正在读取本地图片缓存" />
             )}

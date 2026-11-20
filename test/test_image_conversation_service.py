@@ -214,13 +214,69 @@ class ImageConversationServiceTests(unittest.TestCase):
             images = service.get_conversation(OWNER, "c1")["turns"][0]["images"]
             self.assertEqual(images[0]["status"], "error")
             self.assertIn("已在图片管理中删除", images[0]["error"])
-            self.assertEqual(images[0]["url"], "")
+            # 保留 url：共用同一文件的其他会话仍能对上文件名
+            self.assertEqual(images[0]["url"], "/images/a.png")
             # 带 removed 标记，批量重试才不会把它当成普通失败图
             self.assertTrue(images[0]["removed"])
             # 没被删除的图不受影响
             self.assertEqual(images[1]["status"], "success")
             self.assertEqual(images[1]["url"], "/images/b.png")
             self.assertFalse(images[1].get("removed"))
+
+    def test_mark_images_removed_can_target_single_conversation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(Path(tmp) / "image_conversations.json")
+            shared_image = [{"id": "img-1", "status": "success", "url": "/images/shared.png"}]
+            service.save_conversations(OWNER, [
+                conversation("c1", "2026-10-13T01:00:00.000Z", turns=[{**turn("c1-t"), "images": shared_image}]),
+                conversation("c2", "2026-10-13T01:00:00.000Z", turns=[{**turn("c2-t"), "images": shared_image}]),
+            ])
+
+            marked = service.mark_images_removed(["shared.png"], conversation_id="c1")
+
+            self.assertEqual(marked, 1)
+            c1_images = service.get_conversation(OWNER, "c1")["turns"][0]["images"]
+            c2_images = service.get_conversation(OWNER, "c2")["turns"][0]["images"]
+            # 只标记了指定会话，另一个会话不受影响
+            self.assertTrue(c1_images[0]["removed"])
+            self.assertFalse(c2_images[0].get("removed"))
+
+    def test_removed_images_are_not_counted_as_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(Path(tmp) / "image_conversations.json")
+            service.save_conversations(OWNER, [conversation("c1", "2026-10-13T01:00:00.000Z")])
+            self.assertEqual(service.get_conversation_paths("c1"), ["a.png"])
+            self.assertEqual(service.count_path_owners(), {"a.png": 1})
+            self.assertEqual(service.all_referenced_paths(), {"a.png"})
+
+            service.mark_images_removed(["a.png"])
+
+            # 标记后不再算作该会话的引用，图片管理才不会把它重新挂回来
+            self.assertEqual(service.get_conversation_paths("c1"), [])
+            self.assertEqual(service.count_path_owners(), {})
+            self.assertEqual(service.all_referenced_paths(), set())
+
+    def test_mark_images_removed_matches_exact_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(Path(tmp) / "image_conversations.json")
+            two_images = turn("c1-turn")
+            two_images["images"] = [
+                {"id": "img-1", "status": "success", "url": "/images/2026/10/a.png"},
+                {"id": "img-2", "status": "success", "url": "/images/2026/11/a.png"},
+            ]
+            service.save_conversations(
+                OWNER,
+                [conversation("c1", "2026-10-13T01:00:00.000Z", turns=[two_images])],
+            )
+
+            # 只删 10 月那份：11 月的同名文件还在磁盘上，不能被误标
+            marked = service.mark_images_removed(["2026/10/a.png"])
+
+            self.assertEqual(marked, 1)
+            images = service.get_conversation(OWNER, "c1")["turns"][0]["images"]
+            self.assertTrue(images[0]["removed"])
+            self.assertFalse(images[1].get("removed"))
+            self.assertEqual(images[1]["status"], "success")
 
     def test_mark_images_removed_skips_already_removed_images(self):
         with tempfile.TemporaryDirectory() as tmp:
